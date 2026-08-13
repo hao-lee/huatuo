@@ -23,10 +23,10 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
 	_ "huatuo-bamai/internal/profiler/output/flamegraph"
 	_ "huatuo-bamai/internal/profiler/output/raw"
+	toolstreamoutput "huatuo-bamai/internal/profiler/output/toolstream"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/profiling"
@@ -70,11 +70,7 @@ type ProfilerContext struct {
 	TracerID string
 
 	ToolstreamClient *toolstream.Client
-}
-
-type TracerData struct {
-	MetricData any                   `json:"metric_data,omitempty"`
-	FlameData  *profiler.ProfileData `json:"flamedata"`
+	OutputSink       output.Sink
 }
 
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
@@ -122,6 +118,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	tsClient, err = initToolstreamClient(cliCtx, outputFormat)
 	if err != nil {
 		return nil, err
+	}
+	var outputSink output.Sink
+	if tsClient != nil {
+		outputSink = toolstreamoutput.New(tsClient, cliCtx.String("container-id"))
 	}
 
 	var cpuIDs []int
@@ -202,6 +202,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		TracerID: cliCtx.String("tracer-id"),
 
 		ToolstreamClient: tsClient,
+		OutputSink:       outputSink,
 	}
 	succeeded = true
 	return profilerContext, nil

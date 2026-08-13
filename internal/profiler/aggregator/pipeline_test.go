@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"huatuo-bamai/internal/profiler"
 	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
 )
@@ -200,4 +201,30 @@ func TestPipelineAggregateAndExport_EmptyFormatter(t *testing.T) {
 	}
 
 	aggr.AssertNotCalled(t, "Reset")
+}
+
+func TestPipelineAggregateAndExport_RemoteSink(t *testing.T) {
+	profile := &profiler.ProfileData{ProfileType: profiler.ProfileTypeMemSample}
+	var got output.ProfileSnapshot
+	pctx := &profctx.ProfilerContext{
+		OutputFormat: output.FormatRemote,
+		OutputSink: output.SinkFunc(func(_ context.Context, snapshot output.ProfileSnapshot) error {
+			got = snapshot
+			return nil
+		}),
+	}
+	aggr := NewMockAggregator(t)
+	aggr.On("Snapshot", pctx).Return(profile, nil).Once()
+	aggr.On("Reset").Once()
+
+	pipeline := NewPipeline(pctx, aggr)
+	pipeline.tracerID = "trace-123"
+	pipeline.overflowCount.Store(5)
+
+	if err := pipeline.aggregateAndSnapshot(context.Background(), false); err != nil {
+		t.Fatalf("aggregateAndSnapshot returned error: %v", err)
+	}
+	if got.Profile != profile || got.TracerID != "trace-123" || got.OverflowCount != 5 {
+		t.Fatalf("exported snapshot = %#v", got)
+	}
 }

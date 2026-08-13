@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 	profctx "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/output"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -215,8 +217,20 @@ func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 			return nil
 		}
 
-		if err := p.saveProfilingDocument(ctx, data); err != nil {
-			return fmt.Errorf("upload profiling document: %w", err)
+		profile, ok := data.(*profiler.ProfileData)
+		if !ok {
+			return fmt.Errorf("invalid pprof data for uploading: %T", data)
+		}
+		if p.pctx.OutputSink == nil {
+			return fmt.Errorf("profile output sink is not configured")
+		}
+
+		if err := p.pctx.OutputSink.Export(ctx, output.ProfileSnapshot{
+			Profile:       profile,
+			OverflowCount: int(p.overflowCount.Load()),
+			TracerID:      p.tracerID,
+		}); err != nil {
+			return fmt.Errorf("upload profile snapshot: %w", err)
 		}
 
 		p.aggr.Reset()
