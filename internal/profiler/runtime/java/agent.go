@@ -69,10 +69,11 @@ func ReadAsprofDataLoop(
 		pidToPath,
 		func(output profiler.SampleOutput) { enqueue(output) },
 	)
-	if err := collector.run(ctx); err != nil {
-		return err
-	}
-	return finishAsprofSampling(ctx, opt, collector)
+	collectErr := collector.run(ctx)
+	return errors.Join(
+		collectErr,
+		finishAsprofSampling(ctx, opt, collector),
+	)
 }
 
 type AsprofSamplingOption struct {
@@ -236,13 +237,6 @@ func stopWithOutputArgs(pid int, sessionID, outFilePrefix string, sequence uint6
 	}
 }
 
-func StopJavaProfiler(ctx context.Context, opt *AsprofSamplingOption) error {
-	if opt == nil {
-		return nil
-	}
-	return stopActiveAsprofProcesses(ctx, opt)
-}
-
 func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) error {
 	stopCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
@@ -260,17 +254,7 @@ func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) e
 	})
 	opt.markStopped(results)
 
-	var cleanupErrs []error
-	for _, pid := range opt.Pids {
-		if err := CleanupJavaAgent(pid); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup Java agent for PID %d: %w", pid, err))
-		}
-	}
-
-	return errors.Join(
-		executil.VerifyResults(results),
-		errors.Join(cleanupErrs...),
-	)
+	return executil.VerifyResults(results)
 }
 
 func (opt *AsprofSamplingOption) activePIDList() []int {

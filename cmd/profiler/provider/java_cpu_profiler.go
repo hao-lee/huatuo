@@ -38,15 +38,20 @@ func init() {
 }
 
 type cpuJavaProfiler struct {
-	profileOutFile map[int]string
-	samplingOpt    *javaruntime.AsprofSamplingOption
+	targetPlan *javaTargetPlan
 }
 
 func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newJavaAggregator(pctx)
 }
 
+// ManagesDuration marks each Java target session as owning its sampling
+// window, allowing bounded batches to give every process the full duration.
+func (*cpuJavaProfiler) ManagesDuration() {}
+
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	p.targetPlan = nil
+
 	if err := validateJavaFrequency(pctx.Freq); err != nil {
 		return err
 	}
@@ -77,42 +82,30 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		}
 	}
 
-	if err := validateMaxProfilerProcesses("Java", pids, pctx.MaxProfilerProcesses); err != nil {
-		return err
-	}
-
-	for _, pid := range pids {
-		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolPath); err != nil {
-			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
-		}
-	}
-
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-i", fmt.Sprintf("%dms", 1000/pctx.Freq),
 		"-j", "256",
 	}
 
-	opt := &javaruntime.AsprofSamplingOption{
-		Pids:          pids,
-		ToolPath:      pctx.ToolPath,
-		BaseArgs:      baseArgs,
-		OutFilePrefix: "cpu",
-		AggrInterval:  javaAggregationInterval(pctx),
-		Duration:      time.Duration(pctx.Duration) * time.Second,
-	}
-	profileOutFile, err := javaruntime.StartAsprofSampling(pctx.Ctx, opt)
+	targetPlan, err := prepareJavaTargetPlan(
+		pids,
+		pctx.MaxProfilerProcesses,
+		pctx.ToolPath,
+		baseArgs,
+		"cpu",
+		javaAggregationInterval(pctx),
+		time.Duration(pctx.Duration)*time.Second,
+	)
 	if err != nil {
 		return err
 	}
-
-	p.profileOutFile = profileOutFile
-	p.samplingOpt = opt
+	p.targetPlan = targetPlan
 	return nil
 }
 
-func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.Ctx, p.samplingOpt)
+func (p *cpuJavaProfiler) Stop(_ *pcontext.ProfilerContext) error {
+	return p.targetPlan.cleanup()
 }
 
 func javaAggregationInterval(pctx *pcontext.ProfilerContext) time.Duration {
@@ -124,8 +117,8 @@ func javaAggregationInterval(pctx *pcontext.ProfilerContext) time.Duration {
 }
 
 func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	if p.samplingOpt == nil {
+	if p.targetPlan == nil {
 		return fmt.Errorf("read Java CPU profile: profiler is not started")
 	}
-	return javaruntime.ReadAsprofDataLoop(ctx, p.samplingOpt, p.profileOutFile, enqueue)
+	return p.targetPlan.run(ctx, enqueue)
 }

@@ -16,11 +16,19 @@ package provider
 
 import (
 	"testing"
+	"time"
 
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
 	"huatuo-bamai/pkg/profiling"
 )
+
+func TestPrepareJavaTargetPlanRejectsNegativeConcurrency(t *testing.T) {
+	_, err := prepareJavaTargetPlan(nil, -1, "", nil, "cpu", time.Second, time.Second)
+	if err == nil || err.Error() != "prepare Java targets: maximum concurrency must not be negative" {
+		t.Fatalf("prepareJavaTargetPlan() error=%v, want negative concurrency error", err)
+	}
+}
 
 func TestJavaParseOptionsKeepsProfilerNames(t *testing.T) {
 	tests := []struct {

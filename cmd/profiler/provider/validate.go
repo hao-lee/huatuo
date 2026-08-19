@@ -42,21 +42,6 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 	return nil
 }
 
-func validateMaxProfilerProcesses(profilerName string, pids []int, maximum int) error {
-	if maximum < 0 {
-		return fmt.Errorf("start %s profiler: maximum profiler processes must not be negative", profilerName)
-	}
-	if maximum == 0 || len(pids) <= maximum {
-		return nil
-	}
-	return fmt.Errorf(
-		"start %s profiler: too many profiler processes: maximum=%d, required=%d",
-		profilerName,
-		maximum,
-		len(pids),
-	)
-}
-
 func validateToolFile(profilerName, toolPath, relativePath string, executable bool) error {
 	path := filepath.Join(toolPath, relativePath)
 	info, err := os.Stat(path)
