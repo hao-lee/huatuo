@@ -39,6 +39,7 @@ import (
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
 	pythonruntime "huatuo-bamai/internal/profiler/runtime/python"
+	targetsession "huatuo-bamai/internal/profiler/target"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/profiling"
 )
@@ -823,14 +824,6 @@ func (p *pythonMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 			return err
 		}
 	}
-	if err := validateMaxProfilerProcesses(
-		"Python",
-		pids,
-		pctx.MaxProfilerProcesses,
-	); err != nil {
-		return err
-	}
-
 	for _, pid := range pids {
 		hostPythonDir, version, known, err := pythonruntime.ResolveMemrayPythonPath(pid, bundlePath)
 		if err != nil {
@@ -877,44 +870,29 @@ func (p *pythonMemoryProfiler) ReadDataLoop(
 		return errors.New("read Python memory profile: profiler is not started")
 	}
 
-	errCh := make(chan error, len(p.targets))
+	sessions := make([]targetsession.Session, 0, len(p.targets))
 	for _, target := range p.targets {
 		target := target
-		go func() {
-			err := p.runMemraySession(
-				target.pid,
-				ctx,
-				target.hostPythonDir,
-				target.injectorPath,
-				target.containerPythonDir,
-				"bytes",
-				func(sample profiler.SampleOutput) { enqueue(sample) },
-			)
-			if errors.Is(err, context.Canceled) {
-				err = nil
-			}
-			if err != nil {
-				err = fmt.Errorf("PID %d: %w", target.pid, err)
-			}
-			errCh <- err
-		}()
+		sessions = append(sessions, targetsession.Session{
+			PID: target.pid,
+			Run: func(ctx context.Context) error {
+				return p.runMemraySession(
+					target.pid,
+					ctx,
+					target.hostPythonDir,
+					target.injectorPath,
+					target.containerPythonDir,
+					"bytes",
+					func(sample profiler.SampleOutput) { enqueue(sample) },
+				)
+			},
+		})
 	}
-
-	var errs []error
-	for range p.targets {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				errs = append(errs, err)
-			}
-		case <-ctx.Done():
-			err := <-errCh
-			if err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-	return errors.Join(errs...)
+	return targetsession.RunSessions(
+		ctx,
+		sessions,
+		p.pctx.MaxProfilerProcesses,
+	)
 }
 
 func (p *pythonMemoryProfiler) Stop(_ *pcontext.ProfilerContext) error {
