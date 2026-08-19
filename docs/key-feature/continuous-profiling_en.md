@@ -514,6 +514,12 @@ sudo _output/bin/profiler \
 | `--help`, `-h` | - | All | Display command help |
 | `--version`, `-v` | - | All | Display version and build information |
 
+For Java and Python, `--duration` applies to each target process. When a
+positive `--max-concurrent-procs` is smaller than the number of targets, the
+profiler runs targets in batches. The total wall-clock time can therefore
+approach `ceil(targets / max-concurrent-procs) * duration`; `0` starts all
+targets concurrently. Native profiling remains single-target.
+
 Native profiling options:
 
 | Option | Default | Scope | Description |

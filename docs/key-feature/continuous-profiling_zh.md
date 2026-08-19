@@ -513,6 +513,11 @@ sudo _output/bin/profiler \
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
 | `--version`, `-v` | - | 全部 | 显示版本与构建信息 |
 
+对 Java 和 Python，`--duration` 表示每个目标进程的采集时长。当正数
+`--max-concurrent-procs` 小于目标进程数时，目标会分批采集，因此总耗时可能接近
+`ceil(目标数 / max-concurrent-procs) * duration`；设置为 `0` 时所有目标并发采集。
+原生采集仍只支持单目标。
+
 原生采集专用参数：
 
 | 参数 | 默认值 | 适用范围 | 说明 |
