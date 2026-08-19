@@ -19,23 +19,27 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	profilerexec "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
+	targetsession "huatuo-bamai/internal/profiler/target"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/profiling"
 )
 
+type pythonCPUTarget struct {
+	pid int
+}
+
 type pythonCPUProfiler struct {
-	duration int
-	freq     int
-	toolPath string
-	pids     []int
+	duration      int
+	freq          int
+	toolPath      string
+	maxConcurrent int
+	targets       []pythonCPUTarget
 }
 
 func init() {
@@ -67,6 +71,8 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	p.duration = pctx.Duration
 	p.freq = pctx.Freq
 	p.toolPath = pctx.ToolPath
+	p.maxConcurrent = pctx.MaxProfilerProcesses
+	p.targets = nil
 
 	pids, err := resolvePythonPids(pctx)
 	if err != nil {
@@ -87,17 +93,38 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err != nil {
 		return err
 	}
-	if err := validateMaxProfilerProcesses("Python", pids, pctx.MaxProfilerProcesses); err != nil {
-		return err
+	p.targets = make([]pythonCPUTarget, 0, len(pids))
+	for _, pid := range pids {
+		p.targets = append(p.targets, pythonCPUTarget{pid: pid})
 	}
-
-	p.pids = pids
 
 	return nil
 }
 
 func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	return runPySpyAndEmit(ctx, p.duration, p.freq, p.toolPath, p.pids, enqueue)
+	if len(p.targets) == 0 {
+		return fmt.Errorf("read Python CPU profile: profiler is not started")
+	}
+
+	sessions := make([]targetsession.Session, 0, len(p.targets))
+	for _, target := range p.targets {
+		target := target
+		sessions = append(sessions, targetsession.Session{
+			PID: target.pid,
+			Run: func(ctx context.Context) error {
+				return runPySpySession(
+					ctx,
+					target.pid,
+					p.duration,
+					p.freq,
+					p.toolPath,
+					enqueue,
+				)
+			},
+		})
+	}
+
+	return targetsession.RunSessions(ctx, sessions, p.maxConcurrent)
 }
 
 func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
@@ -121,45 +148,34 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 	return pids, nil
 }
 
-func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, enqueue func(any)) error {
-	cmdResults := runPySpy(ctx, pids, dur, freq, toolPath)
-
-	var errorMessages []string
-
-	for i := range cmdResults {
-		cmdRes := &cmdResults[i]
-		targetPid := cmdRes.Pid
-
-		if !cmdRes.Success {
-			errorMessages = append(errorMessages,
-				fmt.Sprintf("PID[%d] sampling failed: %v, stderr: %q", targetPid, cmdRes.CmdErr, string(cmdRes.Stderr)))
-
-			continue
-		}
-
-		if len(cmdRes.Stdout) > 0 {
-			enqueue(profiler.SampleOutput{
-				PID:    targetPid,
-				Output: string(cmdRes.Stdout),
-			})
-		}
+func runPySpySession(
+	ctx context.Context,
+	pid int,
+	duration int,
+	frequency int,
+	toolPath string,
+	enqueue func(any),
+) error {
+	pyspyBin := filepath.Join(toolPath, "py-spy")
+	result := executil.ExecCmd(
+		ctx,
+		pid,
+		pyspyBin,
+		buildPySpyArgs(pid, strconv.Itoa(duration), strconv.Itoa(frequency))...,
+	)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-
-	if len(errorMessages) > 0 {
-		return fmt.Errorf("sampling failed:\n%s", strings.Join(errorMessages, "\n"))
+	if !result.Success {
+		return fmt.Errorf("sampling failed: %v, stderr: %q", result.CmdErr, string(result.Stderr))
 	}
-
+	if len(result.Stdout) > 0 {
+		enqueue(profiler.SampleOutput{
+			PID:    pid,
+			Output: string(result.Stdout),
+		})
+	}
 	return nil
-}
-
-func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) []executil.CmdResult {
-	pyspyBin := filepath.Join(pyspyPath, "py-spy")
-	durStr := strconv.Itoa(dur)
-	freqStr := strconv.Itoa(freq)
-
-	return profilerexec.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
-		return buildPySpyArgs(pid, durStr, freqStr)
-	})
 }
 
 func buildPySpyArgs(pid int, duration, frequency string) []string {
