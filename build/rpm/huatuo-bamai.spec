@@ -44,6 +44,7 @@ BuildRequires: lz4-devel
 # Runtime dependencies
 Requires: systemd
 Requires: glibc >= 2.17
+Requires: gdb
 Requires: libunwind
 Requires: lz4-libs
 Requires(post): systemd
