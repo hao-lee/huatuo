@@ -4,6 +4,7 @@ set -xeuo pipefail
 ARCH=${1:-amd64}
 OS_DISTRO=${2:-ubuntu24.04}
 GOLANG_VERSION="1.24.0"
+MEMRAY_BUNDLE_ENABLED=1
 
 COMMAMND_DEPS=(
 	"go"
@@ -108,6 +109,20 @@ function prapre_test_env() {
 			# tcpshark retransmit integration test deps
 			"iptables" "iproute2" "python3"
 		)
+		case "$OS_DISTRO" in
+		ubuntu20.04 | ubuntu22.04)
+			MEMRAY_BUNDLE_ENABLED=0
+			echo "skip Memray bundle build on $OS_DISTRO"
+			;;
+		*)
+			packages+=(
+				# memray bundle
+				"g++" "python3-dev" "python3-pip" "python3-setuptools" "python3-wheel"
+				"python3-pkgconfig" "cython3" "pkg-config" "liblz4-dev" "libunwind-dev"
+				"libdebuginfod-dev"
+			)
+			;;
+		esac
 		missing_packages=()
 
 		for pkg in "${packages[@]}"; do
@@ -149,6 +164,6 @@ ls -alh /mnt/host
 
 echo -e "\n\n⬅️ test..."
 
-make test
+make MEMRAY_BUNDLE_ENABLED="$MEMRAY_BUNDLE_ENABLED" test
 
 echo -e "✅ test ok."

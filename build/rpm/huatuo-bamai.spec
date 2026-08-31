@@ -3,6 +3,8 @@ Version: 2.1.0
 Release: 3%{?dist}
 Summary: Huatuo is a cloud-native operating system observability project
 
+%global memray_commit cdb13f88048e44b2fbc3bdaf7b8c0b3fe6a2cd30
+
 # Disable debug package and build-id generation
 %global debug_package %{nil}
 %global _build_id_links none
@@ -14,6 +16,7 @@ License: APLv2
 Source0: https://github.com/ccfos/huatuo/archive/tags/tags/v%{version}.tar.gz
 Source1: huatuo-bamai.service
 Source2: grafana-example.zip
+Source3: https://github.com/hao-lee/memray/archive/%{memray_commit}/memray-%{memray_commit}.tar.gz
 
 # Support multiple architectures
 ExclusiveArch: x86_64 aarch64
@@ -27,10 +30,22 @@ BuildRequires: curl
 BuildRequires: git
 BuildRequires: golang
 BuildRequires: unzip
+BuildRequires: gcc-c++
+BuildRequires: pkgconf-pkg-config
+BuildRequires: python3-devel
+BuildRequires: python3-pip
+BuildRequires: python3-setuptools
+BuildRequires: python3-wheel
+BuildRequires: python3-Cython
+BuildRequires: python3-pkgconfig
+BuildRequires: libunwind-devel
+BuildRequires: lz4-devel
 
 # Runtime dependencies
 Requires: systemd
 Requires: glibc >= 2.17
+Requires: libunwind
+Requires: lz4-libs
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
@@ -42,6 +57,8 @@ network behavior, and resource utilization using eBPF technology.
 
 %prep
 %setup -q -n huatuo-%{version}
+mkdir -p third_party/memray
+tar -xzf %{SOURCE3} --strip-components=1 -C third_party/memray
 
 %build
 # Build from source
@@ -68,7 +85,7 @@ file _output/bin/huatuo-bamai | grep -q "%{_target_cpu}" || {
 }
 
 # Check if required directories exist
-for dir in _output/conf _output/bpf; do
+for dir in _output/conf _output/bpf _output/tools/memray/runtimes; do
     if [ ! -d "$dir" ]; then
         echo "ERROR: Required directory $dir not found"
         exit 1
@@ -96,7 +113,8 @@ sed -i 's/"http:\/\/127.0.0.1:9200"/""/' _output/conf/huatuo-bamai.conf
 
 # Install main application to /opt
 mkdir -p %{buildroot}/opt/huatuo-bamai
-cp -r _output/bin _output/conf _output/bpf LICENSE %{buildroot}/opt/huatuo-bamai/
+cp -r _output/bin _output/conf _output/bpf _output/tools LICENSE \
+    %{buildroot}/opt/huatuo-bamai/
 
 # Install grafana-example directory (extract from zip)
 mkdir -p %{buildroot}/opt/huatuo-bamai/grafana-example
@@ -134,6 +152,7 @@ rm -rf %{buildroot}
 /opt/huatuo-bamai/bin/
 /opt/huatuo-bamai/conf/
 /opt/huatuo-bamai/bpf/
+/opt/huatuo-bamai/tools/
 /opt/huatuo-bamai/grafana-example/
 /usr/local/bin/huatuo-bamai
 /etc/systemd/system/huatuo-bamai.service
