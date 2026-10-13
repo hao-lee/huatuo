@@ -105,6 +105,19 @@ unshare --uts --mount bash -c '
 	if [[ ${test_suite} == e2e ]]; then
 		source "${ROOT_DIR}/e2e/lib.sh"
 	fi
+	last_bpf_mock_test=""
+	if [[ ${test_suite} == integration ]]; then
+		source "${ROOT_DIR}/integration/bpf_mock/common/core.sh"
+		for test_script in "${test_scripts[@]}"; do
+			if is_bpf_mock_test "${test_script}"; then
+				last_bpf_mock_test=${test_script}
+			fi
+		done
+		if [[ -n ${last_bpf_mock_test} ]]; then
+			export BPF_MOCK_ES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-es"
+			source "${ROOT_DIR}/integration/bpf_mock/common/lib.sh"
+		fi
+	fi
 	test_results_init
 	active_test_workspace=""
 	active_test_name=""
@@ -125,6 +138,9 @@ unshare --uts --mount bash -c '
 
 	runner_cleanup() {
 		local runner_status=$?
+		if [[ -n ${last_bpf_mock_test} ]]; then
+			stop_shared_bpf_mock_es "${runner_status}" || runner_status=1
+		fi
 		if [[ -n "${active_test_workspace}" ]]; then
 			runner_test_exit "${runner_status}" || runner_status=$?
 			test_result_record "${active_test_name}" "${runner_status}"
@@ -160,6 +176,9 @@ unshare --uts --mount bash -c '
 			test_result_record "${active_test_name}" "${test_status}"
 			if [[ ${test_status} -ne 0 && ${test_status} -ne 77 ]]; then
 				exit "${test_status}"
+			fi
+			if [[ ${test_script} == "${last_bpf_mock_test}" ]]; then
+				stop_shared_bpf_mock_es 0 || exit 1
 			fi
 		done
 	done
