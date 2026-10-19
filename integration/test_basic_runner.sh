@@ -26,8 +26,9 @@ RUNNER_PARENT_UTS=$(readlink /proc/self/ns/uts)
 RUNNER_PARENT_MOUNT=$(readlink /proc/self/ns/mnt)
 export RUNNER_PARENT_UTS RUNNER_PARENT_MOUNT
 
-mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
+mkdir -p "${RUNNER_FIXTURE}"/{integration/bpf_mock/common,e2e,_output}
 cp "${ROOT_DIR}/integration/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/integration/"
+cp "${ROOT_DIR}/integration/bpf_mock/common/core.sh" "${RUNNER_FIXTURE}/integration/bpf_mock/common/"
 cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
 cat > "${RUNNER_FIXTURE}/integration/env.sh" << 'EOF'
 export ROOT_DIR=$PWD

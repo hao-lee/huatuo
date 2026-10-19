@@ -7,9 +7,13 @@ date: 2026-03-04
 weight: 5
 ---
 
-This integration test validates that **huatuo-bamai** can start correctly with mocked `/proc` and `/sys` filesystems and expose the expected **Prometheus metrics**.
+The integration suite includes fixture tests for **huatuo-bamai** metrics and
+[kernel mock tests for BPF](ebpf-integration-mock_en.md). The kernel
+mock guide covers event collectors, compaction metrics, and native memory
+profiles using production userspace handling.
 
-The test runs the real `huatuo-bamai` binary and verifies the `/metrics`endpoint output without relying on the host kernel or hardware.
+The metrics fixture tests run the real `huatuo-bamai` binary with mocked
+`/proc` and `/sys` filesystems and verify the `/metrics` endpoint output.
 
 ### What the Script Does
 The integration test performs the following steps:
@@ -173,3 +177,10 @@ filename when deriving the metric prefix.
 bash integration/run.sh
 ```
 The test fails if any expected metric is missing or mismatched.
+
+### VM Disk Capacity
+
+VM CI requests a 40 GB disk. Guest setup expands partition-backed XFS/ext4 root
+filesystems to use the available space before running tests. It installs
+`cloud-guest-utils` on Debian/Ubuntu or `cloud-utils-growpart` on RPM systems.
+Partition or filesystem growth failures stop setup; pod evictions remain failures.
