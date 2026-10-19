@@ -115,8 +115,9 @@ run_native_memory_mock() {
 			wait_until 10 0.1 native_memory_identity_ready "${case_dir}/excluded.jsonl" || fatal "excluded host trigger not ready"
 			native_mock_excluded_pid=$(head -n1 "${case_dir}/excluded.jsonl" | jq -er '.pid')
 		fi
+		[[ ${mode} == virtual_alloc ]] || profiler_args+=(--physical-memory-probability 100)
 		# Run from the built package so the CLI finds its normal bpf/ directory.
-		(cd "${ROOT_DIR}/_output" && "${tool}" --type memory --language c --memory-mode "${mode}" --bpf-mock "${profiler_args[@]}" --duration 5 --aggr-interval 5 --physical-memory-probability 100 --output-format collapsed --output-path "${case_dir}" --verbose) > "${case_dir}/profiler.log" 2>&1 &
+		(cd "${ROOT_DIR}/_output" && "${tool}" --type memory --language c --memory-mode "${mode}" --bpf-mock "${profiler_args[@]}" --duration 5 --aggr-interval 5 --output-format collapsed --output-path "${case_dir}" --verbose) > "${case_dir}/profiler.log" 2>&1 &
 		native_mock_profiler_pid=$!
 		wait_until 15 0.1 profiler_ready "${case_dir}/profiler.log" || fatal "native profiler did not start"
 		grep -q 'symbol=".*_mock"' "${case_dir}/profiler.log" || fatal "profiler did not attach to mock hooks"
