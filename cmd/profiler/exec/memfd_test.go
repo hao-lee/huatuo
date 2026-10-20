@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -123,6 +124,19 @@ func TestCollectorCommandSignalChild(t *testing.T) {
 	os.Exit(0)
 }
 
+// runCollectorCommand first waits on Done after Start has returned. Observe
+// that boundary so child readiness cannot cancel a launch still in progress.
+type collectorWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *collectorWaitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
 func TestRunWithMemfdStopContract(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -138,6 +152,7 @@ func TestRunWithMemfdStopContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(t.Context())
 			defer cancel(nil)
+			waitCtx := &collectorWaitContext{Context: ctx, waiting: make(chan struct{})}
 			reader, writer, err := os.Pipe()
 			if err != nil {
 				t.Fatal(err)
@@ -149,7 +164,11 @@ func TestRunWithMemfdStopContract(t *testing.T) {
 				defer close(done)
 				_, err := bufio.NewReader(reader).ReadString('\n')
 				if err == nil {
-					cancel(tc.cause)
+					select {
+					case <-waitCtx.waiting:
+						cancel(tc.cause)
+					case <-ctx.Done():
+					}
 				}
 			}()
 			defer func() { reader.Close(); <-done }()
@@ -161,7 +180,7 @@ func TestRunWithMemfdStopContract(t *testing.T) {
 			if tc.ignore {
 				grace = 100 * time.Millisecond
 			}
-			results := RunWithMemfd(ctx, []int{123}, &executil.Spec{Path: os.Args[0], Env: env, StopSignal: syscall.SIGINT, StopGracePeriod: grace}, func(_ int, _ string) []string { return []string{"-test.run=^TestCollectorCommandSignalChild$"} }, executil.WithStdout(writer))
+			results := RunWithMemfd(waitCtx, []int{123}, &executil.Spec{Path: os.Args[0], Env: env, StopSignal: syscall.SIGINT, StopGracePeriod: grace}, func(_ int, _ string) []string { return []string{"-test.run=^TestCollectorCommandSignalChild$"} }, executil.WithStdout(writer))
 			if len(results) != 1 {
 				t.Fatalf("results=%v", results)
 			}
