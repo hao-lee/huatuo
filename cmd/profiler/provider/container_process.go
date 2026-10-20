@@ -83,7 +83,7 @@ func (f executableFilter) matchesName(name string) bool {
 		return name == f.ExecutableName
 	}
 
-	return strings.HasPrefix(name, f.ExecutablePrefix)
+	return hasExecutablePrefix(name, f.ExecutablePrefix)
 }
 
 // findProcessesInCgroups keeps one root per matching process tree so callers

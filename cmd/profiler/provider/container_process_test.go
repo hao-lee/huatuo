@@ -255,3 +255,18 @@ func writeTestProcess(t *testing.T, root string, process testProcess) {
 		t.Fatalf("WriteFile(%q) error = %v", cmdlinePath, err)
 	}
 }
+
+func TestFindProcessesMatchesPythonExecutablePrefix(t *testing.T) {
+	root, procFS := newTestProcFS(t)
+	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/bin/python3.12", ppid: 1})
+	writeTestProcess(t, root, testProcess{pid: 101, executable: "/usr/libexec/platform-python3.6", ppid: 1})
+	writeTestProcess(t, root, testProcess{pid: 102, executable: "/usr/bin/my-python", ppid: 1})
+
+	actual, err := findProcesses([]int32{100, 101, 102}, procFS, executableFilter{ExecutablePrefix: "python"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected := (map[int][]int{100: {100}, 101: {101}}); !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("Python processes = %v, want %v", actual, expected)
+	}
+}
