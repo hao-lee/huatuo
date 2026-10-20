@@ -44,9 +44,14 @@ cleanup() {
 	local status=$? file
 	huatuo_bamai_stop || status=1
 	if [[ ${status} -ne 0 ]]; then
+		# The runner prints only the first 160 lines, which can all be startup.
+		log_error "${go_snapshot_case_dir}/huatuo.log: final 160 lines"
+		tail -n 160 "${go_snapshot_case_dir}/huatuo.log" >&2 || true
 		kubectl --request-timeout=10s describe pod -n "${GO_SNAPSHOT_NAMESPACE}" "${go_snapshot_pod}" >&2 || true
-		for file in memory.current memory.usage_in_bytes memory.events memory.events.local cgroup.procs; do
-			[[ ! -r "${go_snapshot_cgroup}/${file}" ]] || cat "${go_snapshot_cgroup}/${file}" >&2 || true
+		for file in memory.current memory.usage_in_bytes memory.max memory.limit_in_bytes memory.events memory.events.local cgroup.procs; do
+			[[ -r "${go_snapshot_cgroup}/${file}" ]] || continue
+			log_error "${go_snapshot_cgroup}/${file}"
+			cat "${go_snapshot_cgroup}/${file}" >&2 || true
 		done
 	fi
 	stop_and_wait_by_pid "${go_snapshot_pid}" || true
