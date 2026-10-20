@@ -17,6 +17,7 @@ package symbol
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -105,7 +106,10 @@ func ensureKsymsLoaded() {
 			log.Warnf("symbol: failed to load kallsyms: %v", err)
 			return
 		}
+		// floorSym selects the last alias. Reverse ties so address lookup
+		// preserves kallsyms' first name while name lookup retains all aliases.
+		slices.Reverse(tbl)
+		sort.SliceStable(tbl, func(i, j int) bool { return tbl[i].Addr < tbl[j].Addr })
 		ksymTable = append(symbols{ksymUnknown}, tbl...)
-		ksymTable[1:].sort()
 	})
 }
