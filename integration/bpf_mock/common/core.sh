@@ -44,14 +44,25 @@ build_bpf_mock_module() {
 	local source_dir="${ROOT_DIR}/integration/bpf_mock/${feature}"
 	local kernel_build_dir=${KERNEL_BUILD_DIR:-/lib/modules/$(uname -r)/build}
 	local build_log="${HUATUO_BAMAI_TEST_TMPDIR}/${feature}-mock-build.log"
+	local cached_module="${BPF_MOCK_BUILD_DIR:-}/${feature}_mock.ko"
 	[[ -d "${kernel_build_dir}" ]] || skip "kernel build directory is missing: ${kernel_build_dir}"
 	mkdir -p "${fixture_dir}"
+	# Runner-owned caches never cross source revisions or kernel versions.
+	if [[ -n ${BPF_MOCK_BUILD_DIR:-} && -f ${cached_module} ]]; then
+		cp "${cached_module}" "${fixture_dir}/"
+		echo "reusing module: ${cached_module}" > "${build_log}"
+		return 0
+	fi
 	cp "${ROOT_DIR}/integration/bpf_mock/common/mock_device.h" \
 		"${ROOT_DIR}/integration/bpf_mock/common/Makefile" "${source_dir}/Kbuild" \
 		"${source_dir}/${feature}_mock_kmod.c" \
 		"${source_dir}/${feature}_mock.h" "$@" "${fixture_dir}/"
 	make -C "${fixture_dir}" KERNEL_BUILD_DIR="${kernel_build_dir}" > "${build_log}" 2>&1 \
 		|| fatal "${feature} fixture module build failed; see ${build_log}"
+	if [[ -n ${BPF_MOCK_BUILD_DIR:-} ]]; then
+		mkdir -p "${BPF_MOCK_BUILD_DIR}"
+		cp "${fixture_dir}/${feature}_mock.ko" "${cached_module}"
+	fi
 }
 
 # Ownership is recorded only after successful acquisition.
@@ -112,13 +123,15 @@ stop_bpf_mock_daemon() {
 
 build_bpf_mock_checker() {
 	local feature=$1
-	local checker=${BPF_MOCK_CHECKER_BIN:-${HUATUO_BAMAI_TEST_TMPDIR}/${feature}-mock-checker}
+	local checker=${BPF_MOCK_CHECKER_BIN:-${BPF_MOCK_BUILD_DIR:-${HUATUO_BAMAI_TEST_TMPDIR}}/${feature}-mock-checker}
 	# Reuse a checker prepared in this shell across scenario checks.
 	if [[ ${bpf_mock_checker:-} == "${checker}" && -x ${checker} ]]; then return 0; fi
 	bpf_mock_checker=${checker}
+	if [[ -n ${BPF_MOCK_BUILD_DIR:-} && -z ${BPF_MOCK_CHECKER_BIN:-} && -x ${checker} ]]; then return 0; fi
 	local build_log="${HUATUO_BAMAI_TEST_TMPDIR}/mock-event-checker-build.log"
 	if [[ -z "${BPF_MOCK_CHECKER_BIN:-}" ]]; then
 		require_commands go
+		mkdir -p "$(dirname "${bpf_mock_checker}")"
 		(cd "${ROOT_DIR}" && go build -tags integration -o "${bpf_mock_checker}" ./integration/bpf_mock/${feature}/checker) \
 			> "${build_log}" 2>&1 || fatal "mock event checker build failed; see ${build_log}"
 	fi

@@ -184,3 +184,34 @@ await_bpf_mock_attached events kprobe:hook_mock
 		})
 	}
 }
+
+func TestCheckerReuseAcrossCases(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/bpf_mock/common/lib.sh"
+go() {
+ echo "$6" >> "$BPF_MOCK_BUILD_DIR.calls"
+ printf '#!/bin/sh\n[ "$1" = --fixture ]\n' > "$5"
+ chmod +x "$5"
+}
+export -f go
+run_bpf_mock_checker memory_oom_kill --fixture
+bash -c 'source "$ROOT_DIR/integration/bpf_mock/common/lib.sh"; run_bpf_mock_checker memory_oom_kill --fixture'
+run_bpf_mock_checker system_softlockup --fixture
+`)
+	cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+workspace,
+		"BPF_MOCK_BUILD_DIR="+filepath.Join(workspace, "build"), "BPF_MOCK_CHECKER_BIN=")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("checker reuse: %v: %s", err, out)
+	}
+	calls, err := os.ReadFile(filepath.Join(workspace, "build.calls"))
+	const expected = "./integration/bpf_mock/memory_oom_kill/checker\n./integration/bpf_mock/system_softlockup/checker\n"
+	if err != nil || string(calls) != expected {
+		t.Fatalf("checker builds: %q: %v", calls, err)
+	}
+}

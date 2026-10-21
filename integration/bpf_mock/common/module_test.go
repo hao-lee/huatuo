@@ -149,3 +149,37 @@ exit "$TEST_STATUS"
 		})
 	}
 }
+
+func TestModuleBuildReuse(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/bpf_mock/common/lib.sh"
+mkdir -p "$KERNEL_BUILD_DIR"
+make() {
+ echo build >> "$BPF_MOCK_BUILD_DIR.calls"
+ echo module > "$2/memory_oom_kill_mock.ko"
+}
+export -f make
+build_bpf_mock_module memory_oom_kill "$HUATUO_BAMAI_TEST_TMPDIR/host"
+# Each case runs in a new shell and uses its own output directory.
+bash -c 'source "$ROOT_DIR/integration/bpf_mock/common/lib.sh"; build_bpf_mock_module memory_oom_kill "$HUATUO_BAMAI_TEST_TMPDIR/container"'
+cmp "$HUATUO_BAMAI_TEST_TMPDIR/host/memory_oom_kill_mock.ko" "$HUATUO_BAMAI_TEST_TMPDIR/container/memory_oom_kill_mock.ko"
+# An absent cached artifact must be rebuilt.
+rm "$BPF_MOCK_BUILD_DIR/memory_oom_kill_mock.ko"
+build_bpf_mock_module memory_oom_kill "$HUATUO_BAMAI_TEST_TMPDIR/rebuilt"
+`)
+	cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+workspace,
+		"KERNEL_BUILD_DIR="+filepath.Join(workspace, "headers"), "BPF_MOCK_BUILD_DIR="+filepath.Join(workspace, "build"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("module reuse: %v: %s", err, out)
+	}
+	calls, err := os.ReadFile(filepath.Join(workspace, "build.calls"))
+	if err != nil || string(calls) != "build\nbuild\n" {
+		t.Fatalf("module builds: %q: %v", calls, err)
+	}
+}

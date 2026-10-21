@@ -120,6 +120,7 @@ unshare --uts --mount bash -c '
 			esac
 		done
 		if [[ -n ${last_bpf_mock_test} ]]; then
+			export BPF_MOCK_BUILD_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-build"
 			export BPF_MOCK_ES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-es"
 			source "${ROOT_DIR}/integration/bpf_mock/common/lib.sh"
 		fi
@@ -201,6 +202,7 @@ unshare --uts --mount bash -c '
 
 	# E2E retains artifacts; successful integration runs leave an empty root.
 	if [[ ${test_suite} == integration ]]; then
+		if [[ -n ${last_bpf_mock_test} ]]; then rm -rf -- "${BPF_MOCK_BUILD_DIR}"; fi
 		rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}"
 	fi
 ' huatuo-test-runner "${REQUESTED_REPEAT_COUNT}" "${TEST_SUITE}" "${ROOT_DIR}" "${test_scripts[@]}"

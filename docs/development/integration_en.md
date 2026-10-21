@@ -210,5 +210,11 @@ cache scoped to its image and toolchain. Cache misses
 or transfer failures fall back to compilation. Unit and mock framework tests use
 `-count=1` so cached test results never replace execution.
 
+Command binaries build in one Go invocation, with two build workers by default
+(`GO_BUILD_PARALLELISM=2`). Compiler and linker flags remain unchanged. The
+integration runner also reuses successfully built mock modules and checkers
+between cases, including host and container variants. This cache belongs to one
+runner invocation and is removed after success; modules never cross VM kernels.
+
 Measure both a cold run and a warm run when evaluating CI time: the first run
 populates the persistent cache, and cache download/upload time also counts.
