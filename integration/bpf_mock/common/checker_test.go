@@ -78,6 +78,46 @@ run_bpf_mock_checker memory_oom_kill --fixture
 	}
 }
 
+func TestCheckerBuildReuse(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/bpf_mock/common/lib.sh"
+go() {
+ [[ $1 == build && $2 == -tags && $3 == integration && $4 == -o ]] || return 1
+ printf '%s\n' "$6" >> "$HUATUO_BAMAI_TEST_TMPDIR/builds"
+ printf '#!/bin/sh\n[ "$1" = --fixture ]\n' > "$5"
+ chmod +x "$5"
+}
+# A binary left in the workspace by an earlier invocation must be rebuilt.
+printf '#!/bin/sh\nexit 99\n' > "$HUATUO_BAMAI_TEST_TMPDIR/memory_oom_kill-mock-checker"
+chmod +x "$HUATUO_BAMAI_TEST_TMPDIR/memory_oom_kill-mock-checker"
+run_bpf_mock_checker memory_oom_kill --fixture
+run_bpf_mock_checker memory_oom_kill --fixture
+run_bpf_mock_checker system_softlockup --fixture
+rm "$bpf_mock_checker"
+run_bpf_mock_checker system_softlockup --fixture
+`)
+	cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+workspace, "BPF_MOCK_CHECKER_BIN=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("reuse checker: %v: %s", err, output)
+	}
+	builds, err := os.ReadFile(filepath.Join(workspace, "builds"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expected = "./integration/bpf_mock/memory_oom_kill/checker\n" +
+		"./integration/bpf_mock/system_softlockup/checker\n" +
+		"./integration/bpf_mock/system_softlockup/checker\n"
+	if string(builds) != expected {
+		t.Fatalf("checker builds = %q; want %q", builds, expected)
+	}
+}
+
 func TestMockTestDiscovery(t *testing.T) {
 	core, err := filepath.Abs("core.sh")
 	if err != nil {

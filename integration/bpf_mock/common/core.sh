@@ -112,7 +112,10 @@ stop_bpf_mock_daemon() {
 
 build_bpf_mock_checker() {
 	local feature=$1
-	bpf_mock_checker=${BPF_MOCK_CHECKER_BIN:-${HUATUO_BAMAI_TEST_TMPDIR}/${feature}-mock-checker}
+	local checker=${BPF_MOCK_CHECKER_BIN:-${HUATUO_BAMAI_TEST_TMPDIR}/${feature}-mock-checker}
+	# Reuse a checker prepared in this shell across scenario checks.
+	if [[ ${bpf_mock_checker:-} == "${checker}" && -x ${checker} ]]; then return 0; fi
+	bpf_mock_checker=${checker}
 	local build_log="${HUATUO_BAMAI_TEST_TMPDIR}/mock-event-checker-build.log"
 	if [[ -z "${BPF_MOCK_CHECKER_BIN:-}" ]]; then
 		require_commands go
