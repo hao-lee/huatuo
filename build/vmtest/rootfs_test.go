@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +87,85 @@ grow_root_filesystem
 			actual, err := os.ReadFile(calls)
 			if err != nil || string(actual) != tc.wantCalls {
 				t.Fatalf("calls=%q, want %q: %v", actual, tc.wantCalls, err)
+			}
+		})
+	}
+}
+
+func TestPortableGenerationGuard(t *testing.T) {
+	makefile, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"valid", "stale revision", "missing source", "missing marker", "dirty source"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name, contents string) {
+				t.Helper()
+				path := filepath.Join(dir, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			run := func(args ...string) string {
+				t.Helper()
+				cmd := exec.Command(args[0], args[1:]...)
+				cmd.Dir = dir
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("%v: %v: %s", args, err, out)
+				}
+				return string(out)
+			}
+			write("Makefile", string(makefile))
+			write("build/clang.sh", "")
+			write(".gitignore", "_output/\nbin/\npkg/\ninternal/\n")
+			for _, name := range []string{"bpf", "cmd"} {
+				if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			files := strings.Fields(run("make", "APP_COMMIT=fixture", "--no-print-directory", "--eval=print-portable:;@echo $(PORTABLE_GENERATED_FILES)", "print-portable"))
+			for _, file := range files {
+				write(file, "")
+			}
+			run("git", "init", "-q")
+			run("git", "add", ".")
+			run("git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture")
+			revision := strings.TrimSpace(run("git", "rev-parse", "HEAD"))
+			if mode == "stale revision" {
+				revision = "stale"
+			}
+			if mode != "missing marker" {
+				write("_output/portable-generated.commit", revision+"\n")
+			}
+			write("_output/.bpf-build-stamp-0", "")
+			write("bin/go", "#!/bin/sh\n[ \"$*\" = 'run ./build/bpfabi-tool' ] || exit 9\necho abi >> _output/calls\n")
+			if err := os.Chmod(filepath.Join(dir, "bin/go"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "missing source" {
+				if err := os.Remove(filepath.Join(dir, "internal/toolstream/transport/event.capnp.go")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "dirty source" {
+				write("build/clang.sh", "# modified\n")
+				write("_output/.bpf-build-stamp-0", "")
+			}
+			cmd := exec.Command("make", "gen-build", "SKIP_PORTABLE_GENERATION=1")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "bin")+":"+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if (err == nil) != (mode == "valid") {
+				t.Fatalf("guard: %v: %s", err, out)
+			}
+			calls, _ := os.ReadFile(filepath.Join(dir, "_output/calls"))
+			if (string(calls) == "abi\n") != (mode == "valid") {
+				t.Fatalf("unexpected ABI generation: %q", calls)
 			}
 		})
 	}

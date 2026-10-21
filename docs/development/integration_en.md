@@ -195,3 +195,12 @@ VM CI requests a 40 GB disk. Guest setup expands partition-backed XFS/ext4 root
 filesystems to use the available space before running tests. It installs
 `cloud-guest-utils` on Debian/Ubuntu or `cloud-utils-growpart` on RPM systems.
 Partition or filesystem growth failures stop setup; pod evictions remain failures.
+
+
+### VM Build Reuse
+
+CI generates the architecture-independent OpenAPI, mock, and Cap’n Proto sources
+once per workflow and transfers them to each VM. The artifact must match the
+checkout’s commit and contain every required source; tracked files must be clean.
+BPF objects and their Go ABI types are still generated inside each VM.
+Local builds continue to run all generators.
