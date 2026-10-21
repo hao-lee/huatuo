@@ -153,6 +153,7 @@ create_bpf_mock_pod ns pod "$HUATUO_BAMAI_TEST_TMPDIR/trigger path" /dev/mock ||
 jq -e --arg node "${BPF_MOCK_NODE:-local-node}" --arg dir "$HUATUO_BAMAI_TEST_TMPDIR/trigger path" '
  .metadata.namespace == "ns" and .metadata.name == "pod" and .spec.nodeName == $node
  and .spec.containers[0].name == "trigger" and .spec.containers[0].imagePullPolicy == "Never"
+ and .spec.terminationGracePeriodSeconds == 1
  and any(.spec.volumes[]; .name == "trigger" and .hostPath.path == $dir)
 ' "$HUATUO_BAMAI_TEST_TMPDIR/pod.json"
 `, "BPF_MOCK_NODE="+tc.node, "FAIL_STEP="+tc.failure)

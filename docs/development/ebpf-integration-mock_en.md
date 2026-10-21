@@ -385,6 +385,8 @@ when pod setup fails. `read_bpf_mock_container namespace pod controller output`
 performs one discovery attempt for `memory` or `cpu`; scripts set the wait policy.
 `verify_bpf_mock_container_alive namespace pod expected_id` checks the named
 trigger container. Scripts retain their scenario order and cleanup sequence.
+Fixture pods use a one-second termination grace period after verification;
+cleanup still waits for namespace deletion and fails if deletion times out.
 
 ### Minimal host event test
 
