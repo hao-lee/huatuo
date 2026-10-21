@@ -110,6 +110,13 @@ Go fixture builds reuse the inherited `GOCACHE` or Go's default build cache.
 Build temporary files and test outputs stay in the case workspace. Live Go test
 invocations retain `-count=1` to execute again while reusing compiled dependencies.
 
+The continuous-profiling API, profile-filter, IRQ autotracing, and storage-values
+tests share one default Elasticsearch instance per suite repetition. Indices
+include each case's workspace name. The runner stops storage after the last
+selected case in this group, or on failure; standalone scripts own their own
+instance. Storage compatibility tests and authenticated BPF mock storage keep
+their separate instances and settings.
+
 ---
 
 ### Background Process Cleanup

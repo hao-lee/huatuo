@@ -106,16 +106,26 @@ unshare --uts --mount bash -c '
 		source "${ROOT_DIR}/e2e/lib.sh"
 	fi
 	last_bpf_mock_test=""
+	last_shared_storage_test=""
 	if [[ ${test_suite} == integration ]]; then
 		source "${ROOT_DIR}/integration/bpf_mock/common/core.sh"
 		for test_script in "${test_scripts[@]}"; do
 			if is_bpf_mock_test "${test_script}"; then
 				last_bpf_mock_test=${test_script}
 			fi
+			case ${test_script##*/} in
+			test_apiserver_continuous_profiling_*.sh | test_apiserver_job_recovery.sh | test_apiserver_profile_filters.sh | test_autotracing_irqtracing.sh | test_basic_elasticsearch_values.sh)
+				last_shared_storage_test=${test_script}
+				;;
+			esac
 		done
 		if [[ -n ${last_bpf_mock_test} ]]; then
 			export BPF_MOCK_ES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-es"
 			source "${ROOT_DIR}/integration/bpf_mock/common/lib.sh"
+		fi
+		if [[ -n ${last_shared_storage_test} ]]; then
+			export STORAGE_SHARED_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/default-es"
+			source "${ROOT_DIR}/integration/lib_storage.sh"
 		fi
 	fi
 	test_results_init
@@ -138,12 +148,15 @@ unshare --uts --mount bash -c '
 
 	runner_cleanup() {
 		local runner_status=$?
-		if [[ -n ${last_bpf_mock_test} ]]; then
-			stop_shared_bpf_mock_es "${runner_status}" || runner_status=1
-		fi
 		if [[ -n "${active_test_workspace}" ]]; then
 			runner_test_exit "${runner_status}" || runner_status=$?
 			test_result_record "${active_test_name}" "${runner_status}"
+		fi
+		if [[ -n ${last_shared_storage_test} ]]; then
+			stop_shared_storage "${runner_status}" || runner_status=1
+		fi
+		if [[ -n ${last_bpf_mock_test} ]]; then
+			stop_shared_bpf_mock_es "${runner_status}" || runner_status=1
 		fi
 		test_results_summary
 		[[ ${runner_status} -ne 77 ]] || runner_status=0
@@ -179,6 +192,9 @@ unshare --uts --mount bash -c '
 			fi
 			if [[ ${test_script} == "${last_bpf_mock_test}" ]]; then
 				stop_shared_bpf_mock_es 0 || exit 1
+			fi
+			if [[ ${test_script} == "${last_shared_storage_test}" ]]; then
+				stop_shared_storage 0 || exit 1
 			fi
 		done
 	done

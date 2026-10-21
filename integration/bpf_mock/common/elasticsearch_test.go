@@ -90,6 +90,115 @@ read_bpf_mock_es_events "$HUATUO_BAMAI_TEST_TMPDIR/events.json"
 	}
 }
 
+func TestDefaultElasticsearchLifecycle(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name             string
+		wantExit, starts int
+	}{
+		{"shared", 0, 1},
+		{"private", 0, 2},
+		{"failure", 42, 1},
+		{"skip", 77, 1},
+		{"compatibility", 0, 4},
+		{"stop_failure", 1, 1},
+		{"state_failure", 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/lib_storage.sh"
+if [[ $TEST_MODE != private ]]; then export STORAGE_SHARED_DIR="$HUATUO_BAMAI_TEST_TMPDIR/shared"; fi
+docker() {
+ case $1 in
+ run) printf 'start\n' >> "$TEST_LOG"; printf 'container-%s\n' "${HUATUO_BAMAI_TEST_TMPDIR##*/}";;
+ port) printf '127.0.0.1:19200\n';;
+ rm) printf 'stop\n' >> "$TEST_LOG"; [[ $TEST_MODE != stop_failure ]];;
+ logs) printf 'shared storage diagnostics\n';;
+ image|pull) return 0;;
+ *) return 1;;
+ esac
+}
+printf() {
+ if [[ $TEST_MODE == state_failure && $1 == STORAGE_CONTAINER_ID=* ]]; then
+  builtin printf "STORAGE_CONTAINER_ID='"
+  return 1
+ fi
+ builtin printf "$@"
+}
+storage_ready() { return 0; }
+timeout() { shift; "$@"; }
+finish() {
+ local status=$?
+ [[ -z ${STORAGE_SHARED_DIR:-} ]] || stop_shared_storage "$status" || exit 1
+}
+trap finish EXIT
+run_case() (
+ export HUATUO_BAMAI_TEST_TMPDIR="$HUATUO_BAMAI_TEST_TMPDIR/$1"
+ mkdir -p "$HUATUO_BAMAI_TEST_TMPDIR"
+ trap storage_stop EXIT
+ storage_start "${2:-default}"
+ if [[ ${2:-default} == default ]]; then
+  [[ $STORAGE_ADDR == http://* && -z $STORAGE_USERNAME && -z $STORAGE_PASSWORD ]]
+ else
+  [[ $STORAGE_SHARED == false && -n $STORAGE_USERNAME && -n $STORAGE_PASSWORD ]]
+ fi
+ storage_test_index profiles >> "$HUATUO_BAMAI_TEST_TMPDIR/index"
+ [[ $TEST_MODE != failure ]] || exit 42
+ [[ $TEST_MODE != skip ]] || exit 77
+)
+run_case case-one.Abc
+run_case case-two.Xyz
+if [[ $TEST_MODE == compatibility ]]; then
+ for profile in elasticsearch_v7 elasticsearch_v8 opensearch_v2; do run_case "$profile" "$profile"; done
+fi
+`)
+			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+workspace,
+				"STORAGE_SHARED_DIR=", "TEST_LOG="+filepath.Join(workspace, "lifecycle.log"), "TEST_MODE="+tc.name)
+			output, err := cmd.CombinedOutput()
+			status := 0
+			if err != nil {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) {
+					t.Fatal(err)
+				}
+				status = exit.ExitCode()
+			}
+			if status != tc.wantExit {
+				t.Fatalf("storage lifecycle: exit=%d, want %d: %s", status, tc.wantExit, output)
+			}
+			log, err := os.ReadFile(filepath.Join(workspace, "lifecycle.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(string(log), "start\n") != tc.starts || strings.Count(string(log), "stop\n") != tc.starts {
+				t.Fatalf("unexpected lifecycle: %s", log)
+			}
+			if tc.name == "shared" || tc.name == "private" {
+				for _, name := range []string{"case-one.Abc", "case-two.Xyz"} {
+					index, err := os.ReadFile(filepath.Join(workspace, name, "index"))
+					if err != nil || string(index) != "profiles_"+strings.ToLower(name) {
+						t.Fatalf("index isolation: %q: %v", index, err)
+					}
+				}
+			}
+			_, stateErr := os.Stat(filepath.Join(workspace, "shared", "es.env"))
+			if tc.name == "failure" || tc.name == "stop_failure" {
+				if stateErr != nil {
+					t.Fatalf("failure artifacts missing: %v", stateErr)
+				}
+			} else if !errors.Is(stateErr, os.ErrNotExist) {
+				t.Fatalf("unexpected shared state: %v", stateErr)
+			}
+		})
+	}
+}
+
 func TestMockElasticsearchLifecycle(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is required for the Elasticsearch helper")
