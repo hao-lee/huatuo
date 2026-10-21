@@ -229,11 +229,11 @@ portable-generated: gen-build
 test: unit integration e2e
 
 unit: gen-build
-	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
+	@go test -count=1 -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
 integration: build
-	go test -v -tags integration ./integration/bpf_mock/...
+	go test -count=1 -v -tags integration ./integration/bpf_mock/...
 	@bash integration/run.sh
 
 e2e: build

@@ -21,9 +21,9 @@
 # - HOME: Used to add the user's Go binary directory to PATH.
 # - PATH: Extended with system and user Go binary directories.
 # Parameters:
-# - None.
+# - Optional --prepare-only or --test-only; omitted runs both phases.
 # Examples:
-# - run-in-vm.sh  # prepare the guest and run make e2e
+# - run-in-vm.sh  # prepare the guest and run make test
 
 set -euo pipefail
 
@@ -199,10 +199,15 @@ install_temporary_go_tools() {
 }
 
 configure_proxy
-print_sys_info
 export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
-install_test_dependencies
-grow_root_filesystem
+export GOCACHE=/root/.cache/go-build
+if [[ ${1:-} != --test-only ]]; then
+	print_sys_info
+	install_test_dependencies
+	grow_root_filesystem
+fi
+# CI restores the Go cache after growing the filesystem, before any Go builds.
+if [[ ${1:-} == --prepare-only ]]; then exit 0; fi
 if [[ ! -f /mnt/host/_output/portable-generated.commit ]]; then
 	install_temporary_go_tools
 fi

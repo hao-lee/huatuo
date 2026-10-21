@@ -170,3 +170,104 @@ func TestPortableGenerationGuard(t *testing.T) {
 		})
 	}
 }
+
+func TestVMGoCache(t *testing.T) {
+	script, err := filepath.Abs("../../.github/workflows/scripts/vm-test/go-cache.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for name, contents := range map[string]string{
+		"vm.env": "VM_IP=192.0.2.1\nVM_SSH_KEY=/tmp/test-key\n",
+		"ssh":    "#!/bin/sh\nif [ \"$TEST_MODE\" = key ]; then printf '%s\\n' \"$TEST_METADATA\"; fi\n",
+		"rsync":  "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RUNNER_TEMP/rsync-args\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(mode, image, metadata string) string {
+		t.Helper()
+		cmd := exec.Command("bash", script, mode)
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "VM_ENV_FILE="+filepath.Join(dir, "vm.env"), "RUNNER_TEMP="+dir,
+			"VM_IMAGE_REF="+image, "TEST_MODE="+mode, "TEST_METADATA="+metadata)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v: %s", mode, err, out)
+		}
+		return string(out)
+	}
+	key := run("key", "image-a", "go1.24 gcc14")
+	if key != run("key", "image-a", "go1.24 gcc14") ||
+		key == run("key", "image-b", "go1.24 gcc14") || key == run("key", "image-a", "go1.25 gcc14") {
+		t.Fatal("cache key must be stable and change with the VM image or toolchain")
+	}
+	for _, mode := range []string{"restore", "save"} {
+		run(mode, "", "")
+		args, err := os.ReadFile(filepath.Join(dir, "rsync-args"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := filepath.Join(dir, "huatuo-go-build") + "/"
+		remote := "root@192.0.2.1:/root/.cache/go-build/"
+		want := local + "\n" + remote + "\n"
+		if mode == "save" {
+			want = remote + "\n" + local + "\n"
+		}
+		if !strings.HasSuffix(string(args), want) || strings.Contains(string(args), "--delete\n") != (mode == "save") {
+			t.Fatalf("%s cache transport: %s", mode, args)
+		}
+	}
+}
+
+func TestGuestPreparationPhases(t *testing.T) {
+	source, err := os.ReadFile("../../.github/workflows/scripts/vm-test/run-in-vm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.Index(source, []byte("\nconfigure_proxy\n"))
+	if end < 0 {
+		t.Fatal("guest script entry point missing")
+	}
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{"--prepare-only", "proxy\ninfo\ndependencies\ngrow\n"},
+		{"--test-only", "proxy\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1\n"},
+		{"", "proxy\ninfo\ndependencies\ngrow\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1\n"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "_output"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "_output/portable-generated.commit"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			const stubs = `
+configure_proxy() { echo proxy >> "$TEST_CALLS"; }
+print_sys_info() { echo info >> "$TEST_CALLS"; }
+install_test_dependencies() { echo dependencies >> "$TEST_CALLS"; }
+grow_root_filesystem() { echo grow >> "$TEST_CALLS"; }
+install_temporary_go_tools() { exit 99; }
+make() { echo "make $*" >> "$TEST_CALLS"; }
+git() { :; }
+`
+			script := string(source[:end]) + stubs + strings.ReplaceAll(string(source[end:]), "/mnt/host", dir)
+			cmd := exec.Command("bash", "-c", script, "guest", tc.mode)
+			calls := filepath.Join(dir, "calls")
+			cmd.Env = append(os.Environ(), "TEST_CALLS="+calls)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("guest phase: %v: %s", err, out)
+			}
+			actual, err := os.ReadFile(calls)
+			if err != nil || string(actual) != tc.want {
+				t.Fatalf("calls: %q; want %q: %v", actual, tc.want, err)
+			}
+		})
+	}
+}
