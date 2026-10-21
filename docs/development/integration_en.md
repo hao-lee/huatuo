@@ -106,6 +106,10 @@ all selected executions as SKIP.
 
 - Output the list of successfully validated metrics
 
+Go fixture builds reuse the inherited `GOCACHE` or Go's default build cache.
+Build temporary files and test outputs stay in the case workspace. Live Go test
+invocations retain `-count=1` to execute again while reusing compiled dependencies.
+
 ---
 
 ### Background Process Cleanup

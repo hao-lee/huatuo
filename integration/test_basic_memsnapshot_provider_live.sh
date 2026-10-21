@@ -24,10 +24,9 @@ source "${ROOT_DIR}/integration/lib.sh"
 log_info "validating live Go, HotSpot and CPython memory providers"
 (
 	cd "${ROOT_DIR}"
-	export GOCACHE="${HUATUO_BAMAI_TEST_TMPDIR}/go-cache"
 	export GOTMPDIR="${HUATUO_BAMAI_TEST_TMPDIR}/go-tmp"
 	export TMPDIR="${HUATUO_BAMAI_TEST_TMPDIR}/tmp"
-	mkdir -p "${GOCACHE}" "${GOTMPDIR}" "${TMPDIR}"
+	mkdir -p "${GOTMPDIR}" "${TMPDIR}"
 	go test -mod=vendor -tags=integration -count=1 -v \
 		-run '^TestSnapshotLive(Go|HotSpot|CPython)Process$' \
 		./integration/testdata/test_basic_memsnapshot_provider_live_linux_test.go
