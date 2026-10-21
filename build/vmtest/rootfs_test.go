@@ -274,6 +274,148 @@ git() { :; }
 	}
 }
 
+func TestIntegrationRunnerPool(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"refill", "resource", "failure", "skip", "serial", "repeated", "cleanup failure"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			workspace := filepath.Join(dir, "workspace")
+			if err := os.Mkdir(workspace, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			// Mount isolation is covered by test_basic_runner.sh on the VM.
+			// These stubs let the actual scheduler execute without CAP_SYS_ADMIN.
+			bin := filepath.Join(dir, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"unshare", "mount"} {
+				body := "#!/bin/sh\nexit 0\n"
+				if name == "unshare" {
+					body = "#!/bin/sh\n[ \"$1\" = --mount ] || exit 99\nshift\nexec \"$@\"\n"
+				}
+				path := filepath.Join(bin, name)
+				if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			names := []string{"test_metrics.sh", "test_node_config_api.sh", "test_metrics_include_filter.sh", "test_unknown.sh"}
+			if mode == "resource" {
+				names = []string{"test_profiler_native_physical_alloc_mock.sh", "test_profiler_native_physical_usage_mock.sh", "test_profiler_native_virtual_alloc_mock.sh", "test_unknown.sh"}
+			}
+			const script = `
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+name=${0##*/}
+wait_for() {
+ for ((i=0;i<300;i++)); do [[ -f $1 ]] && return 0; sleep 0.01; done
+ echo "timed out: $1" >&2; return 1
+}
+case $name in
+ test_metrics.sh|test_profiler_native_physical_alloc_mock.sh)
+  if [[ $TEST_MODE == failure ]]; then for ((n=0;n<180;n++)); do echo fixture-progress; done; fi
+  echo diagnostic-from-first-case
+  touch "$TEST_STATE/first-started"
+  if [[ $TEST_MODE == refill || $TEST_MODE == failure ]]; then wait_for "$TEST_STATE/second-started"; fi
+  if [[ $TEST_MODE == failure ]]; then exit 42; fi
+  if [[ $TEST_MODE == refill ]]; then wait_for "$TEST_STATE/third-done"; fi
+  if [[ $TEST_MODE == resource ]]; then wait_for "$TEST_STATE/third-started"; fi
+  touch "$TEST_STATE/first-done"
+  if [[ $TEST_MODE == skip ]]; then exit 77; fi
+  ;;
+ test_node_config_api.sh|test_profiler_native_physical_usage_mock.sh)
+  if [[ $TEST_MODE == serial || $TEST_MODE == resource ]]; then [[ -f $TEST_STATE/first-done ]]; fi
+  touch "$TEST_STATE/second-started"
+  trap 'touch "$TEST_STATE/second-cleaned"' EXIT
+  if [[ $TEST_MODE == failure ]]; then wait_for "$TEST_STATE/first-cleaned"; fi
+  touch "$TEST_STATE/second-done"
+  ;;
+ test_metrics_include_filter.sh|test_profiler_native_virtual_alloc_mock.sh)
+  [[ $TEST_MODE != failure ]] || touch "$TEST_STATE/unexpected-start"
+  touch "$TEST_STATE/third-started"
+  if [[ $TEST_MODE == refill ]]; then [[ -f $TEST_STATE/second-done && ! -f $TEST_STATE/first-done ]]; fi
+  touch "$TEST_STATE/third-done"
+  ;;
+ test_unknown.sh)
+  [[ -f $TEST_STATE/first-done && -f $TEST_STATE/second-done && -f $TEST_STATE/third-done ]]
+  touch "$TEST_STATE/exclusive-done"
+  ;;
+esac
+`
+			args := []string{"-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/lib_runner.sh"
+if [[ $TEST_MODE == failure ]]; then
+ huatuo_bamai_stop() {
+  if [[ $1 == */test_metrics.* ]]; then touch "$TEST_STATE/first-cleaned"; fi
+ }
+elif [[ $TEST_MODE == 'cleanup failure' ]]; then huatuo_bamai_stop() { return 1; }; fi
+run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
+`, "pool"}
+			for _, name := range names {
+				path := filepath.Join(dir, name)
+				if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, path)
+			}
+			jobs, repeats := "2", "1"
+			if mode == "repeated" {
+				repeats = "2"
+			}
+			if mode == "serial" {
+				jobs = "1"
+			}
+			cmd := exec.Command("bash", args...)
+			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+workspace, "TEST_STATE="+dir,
+				"TEST_MODE="+mode, "TEST_JOBS="+jobs, "TEST_REPEATS="+repeats, "PATH="+bin+":"+os.Getenv("PATH"), "BPF_MOCK_ES_DIR=", "STORAGE_SHARED_DIR=")
+			out, err := cmd.CombinedOutput()
+			if mode == "failure" || mode == "cleanup failure" {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+					t.Fatalf("want failure: %v: %s", err, out)
+				}
+				if mode == "failure" && !strings.Contains(string(out), "total=2 passed=1 skipped=0 failed=1") {
+					t.Fatalf("in-flight result was not drained: %s", out)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "unexpected-start")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("runner started a pending case after failure")
+				}
+				if mode == "failure" && !strings.Contains(string(out), "diagnostic-from-first-case") {
+					t.Fatalf("failed case log was not printed: %s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("pool: %v: %s", err, out)
+			}
+			want := "total=4 passed=4 skipped=0 failed=0"
+			if mode == "repeated" {
+				want = "total=8 passed=8 skipped=0 failed=0"
+			}
+			if mode == "skip" {
+				want = "total=4 passed=3 skipped=1 failed=0"
+			}
+			if !strings.Contains(string(out), want) {
+				t.Fatalf("missing summary %s: %s", want, out)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "exclusive-done")); err != nil {
+				t.Fatal("exclusive test did not run after the pool")
+			}
+			if _, err := os.Stat(workspace); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("successful workspace was not removed: %v", err)
+			}
+		})
+	}
+}
+
 func TestIntegrationWorkerPorts(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {

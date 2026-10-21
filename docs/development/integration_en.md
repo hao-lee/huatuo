@@ -45,6 +45,33 @@ or
 ```bash
 make integration
 ```
+### Parallel Integration Tests
+
+Local runs default to one worker. Use two workers with:
+
+```bash
+bash integration/run.sh -j 2
+# Or rebuild and run:
+INTEGRATION_JOBS=2 make integration
+```
+
+VM CI uses two workers. Reviewed tests run in a bounded pool; cases in the same
+resource group serialize. Physical allocation/usage mocks share a group because
+their hook symbols overlap. Network tests share a group for traffic and device
+isolation. CPU-sensitive and unreviewed tests run alone after the pool drains.
+E2E remains serial, including when `INTEGRATION_JOBS` is set.
+
+Each worker reserves ports from its own range. Each parallel case gets a private
+mount namespace for Huatuo's PID files and toolstream socket, while retaining
+access to the host container runtime. Run one suite runner per host.
+Shared Elasticsearch starts under a lock and remains alive until the batch
+finishes. On failure, the runner stops scheduling, waits for active cases to
+finish cleanup, and preserves failed-case logs. Results include case durations;
+full case output is saved in `test.log` and printed on failure.
+
+New tests default to serial execution. Review shared kernel state, traffic,
+paths, ports, and CPU assumptions before adding a group in `lib_runner.sh`.
+
 ### Prerequisites and Results
 
 Both suites use `integration/run.sh`, which defaults to integration.
