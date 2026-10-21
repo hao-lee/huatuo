@@ -100,6 +100,7 @@ func TestDefaultElasticsearchLifecycle(t *testing.T) {
 		wantExit, starts int
 	}{
 		{"shared", 0, 1},
+		{"concurrent", 0, 1},
 		{"private", 0, 2},
 		{"failure", 42, 1},
 		{"skip", 77, 1},
@@ -116,7 +117,7 @@ source "$ROOT_DIR/integration/lib_storage.sh"
 if [[ $TEST_MODE != private ]]; then export STORAGE_SHARED_DIR="$HUATUO_BAMAI_TEST_TMPDIR/shared"; fi
 docker() {
  case $1 in
- run) printf 'start\n' >> "$TEST_LOG"; printf 'container-%s\n' "${HUATUO_BAMAI_TEST_TMPDIR##*/}";;
+ run) [[ $TEST_MODE != concurrent ]] || sleep 0.05; printf 'start\n' >> "$TEST_LOG"; printf 'container-%s\n' "${HUATUO_BAMAI_TEST_TMPDIR##*/}";;
  port) printf '127.0.0.1:19200\n';;
  rm) printf 'stop\n' >> "$TEST_LOG"; [[ $TEST_MODE != stop_failure ]];;
  logs) printf 'shared storage diagnostics\n';;
@@ -152,8 +153,15 @@ run_case() (
  [[ $TEST_MODE != failure ]] || exit 42
  [[ $TEST_MODE != skip ]] || exit 77
 )
-run_case case-one.Abc
-run_case case-two.Xyz
+if [[ $TEST_MODE == concurrent ]]; then
+ run_case case-one.Abc & first=$!
+ run_case case-two.Xyz & second=$!
+ wait "$first"
+ wait "$second"
+else
+ run_case case-one.Abc
+ run_case case-two.Xyz
+fi
 if [[ $TEST_MODE == compatibility ]]; then
  for profile in elasticsearch_v7 elasticsearch_v8 opensearch_v2; do run_case "$profile" "$profile"; done
 fi
@@ -214,6 +222,7 @@ func TestMockElasticsearchLifecycle(t *testing.T) {
 		wantIndex int
 	}{
 		{name: "shared", wantStart: 1, wantIndex: 2},
+		{name: "shared_concurrent", wantStart: 1, wantIndex: 2},
 		{name: "private", wantStart: 2, wantIndex: 2},
 		{name: "shared_failure", wantExit: 1, wantStart: 1, wantIndex: 2},
 		{name: "shared_index_failure", wantExit: 1, wantStart: 1},
@@ -239,6 +248,7 @@ stub_storage() {
  docker() { [[ $1 != logs ]] || printf 'shared ES diagnostics\n'; }
  storage_start() {
   [[ $1 == elasticsearch_v8 ]]
+  [[ $TEST_MODE != shared_concurrent ]] || sleep 0.05
   printf 'start\n' >> "$TEST_LOG"
   STORAGE_CONTAINER_ID=mock-container
   STORAGE_ADDR=https://127.0.0.1:9200
@@ -274,8 +284,15 @@ run_case() (
  start_bpf_mock_es
  write_bpf_mock_es_config memory_oom_kill
 )
-run_case case-one.Abc
-run_case case-two.Xyz
+if [[ $TEST_MODE == shared_concurrent ]]; then
+ run_case case-one.Abc & first=$!
+ run_case case-two.Xyz & second=$!
+ wait "$first"
+ wait "$second"
+else
+ run_case case-one.Abc
+ run_case case-two.Xyz
+fi
 [[ $TEST_MODE != shared_failure ]] || exit 1
 `)
 			cmd.Env = append(os.Environ(), "ROOT_DIR="+root,

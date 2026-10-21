@@ -251,6 +251,9 @@ write_apiserver_apis_config() {
 [Jobs]
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
+[Agent]
+    HTTPPort = ${HUATUO_BAMAI_ADDR##*:}
+
 [Agent.Auth]
     BearerToken = "integration-node-token"
 
@@ -282,6 +285,9 @@ write_apiserver_without_profile_storage_config() {
 
 [Jobs]
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[Agent]
+    HTTPPort = ${HUATUO_BAMAI_ADDR##*:}
 
 [Agent.Auth]
     BearerToken = "integration-node-token"
@@ -337,6 +343,9 @@ write_continuous_profiling_apiserver_config() {
     ID = "integration-readonly-user"
     BearerToken = "${OTHER_API_TOKEN}"
     Permissions = ["/v1/profiling", "/v1/profiling/**"]
+
+[Agent]
+    HTTPPort = ${HUATUO_BAMAI_ADDR##*:}
 
 [Agent.Auth]
     BearerToken = "integration-node-token"

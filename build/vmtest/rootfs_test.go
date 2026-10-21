@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml"
 )
 
 func TestGrowRootFilesystem(t *testing.T) {
@@ -267,6 +269,100 @@ git() { :; }
 			actual, err := os.ReadFile(calls)
 			if err != nil || string(actual) != tc.want {
 				t.Fatalf("calls: %q; want %q: %v", actual, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestIntegrationWorkerPorts(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+ss() { echo 'LISTEN 0 128 127.0.0.1:20000 0.0.0.0:*'; }
+export INTEGRATION_PORT_BASE=20000 INTEGRATION_PORT_DIR="$TEST_STATE/ports"
+for ((i=0;i<12;i++)); do (allocate_available_port > "$TEST_STATE/port-$i") & done
+wait
+INTEGRATION_PORT_BASE=21000 INTEGRATION_PORT_DIR="$TEST_STATE/other" allocate_available_port > "$TEST_STATE/other-port"
+# A failed socket query must fail allocation instead of treating every port as free.
+ss() { return 1; }
+if allocate_available_port; then exit 99; fi
+`)
+	cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "TEST_STATE="+dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("allocate worker ports: %v: %s", err, out)
+	}
+	seen := map[int]bool{}
+	for i := range 12 {
+		data, err := os.ReadFile(filepath.Join(dir, "port-"+strconv.Itoa(i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil || port <= 20000 || port >= 21000 || seen[port] {
+			t.Fatalf("invalid or duplicate worker port %q: %v", data, err)
+		}
+		seen[port] = true
+	}
+	other, err := os.ReadFile(filepath.Join(dir, "other-port"))
+	if err != nil || strings.TrimSpace(string(other)) != "21000" {
+		t.Fatalf("second worker port = %q: %v", other, err)
+	}
+}
+
+func TestIntegrationWorkerConfigs(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, config, address string
+		port                  int64
+	}{
+		{"implicit parent", "[HTTPServer.Auth]\nBearerToken = \"secret\"\n", "127.0.0.1:21001", 21001},
+		{"explicit parent", "[HTTPServer]\n[HTTPServer.Auth]\nBearerToken = \"secret\"\n", "127.0.0.1:21001", 21001},
+		{"custom address", "[HTTPServer]\nListenAddress = \"127.0.0.1:23456\"\n[HTTPServer.Auth]\nBearerToken = \"secret\"\n", "127.0.0.1:23456", 23456},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "bamai.conf"), []byte(tc.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/config.sh"
+source "$ROOT_DIR/integration/lib_storage.sh"
+configure_worker_bamai_address
+APISERVER_PORT=21100 API_TOKEN=admin OTHER_API_TOKEN=reader ES_PASSWORD=test STORAGE_ADDR=http://127.0.0.1:9200
+for writer in write_apiserver_apis_config write_apiserver_without_profile_storage_config write_continuous_profiling_apiserver_config; do
+ "$writer"
+ cp "$HUATUO_BAMAI_TEST_TMPDIR/apiserver.conf" "$HUATUO_BAMAI_TEST_TMPDIR/$writer.conf"
+done
+`)
+			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+dir, "HUATUO_BAMAI_ADDR=http://"+tc.address)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("configure worker: %v: %s", err, out)
+			}
+			cfg, err := toml.LoadFile(filepath.Join(dir, "bamai.conf"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Get("HTTPServer.ListenAddress") != tc.address || cfg.Get("HTTPServer.Auth.BearerToken") != "secret" {
+				t.Fatalf("incorrect daemon config: %s", cfg)
+			}
+			for _, writer := range []string{"write_apiserver_apis_config", "write_apiserver_without_profile_storage_config", "write_continuous_profiling_apiserver_config"} {
+				api, err := toml.LoadFile(filepath.Join(dir, writer+".conf"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if api.Get("Agent.HTTPPort") != tc.port || api.Get("Agent.Auth.BearerToken") != "integration-node-token" {
+					t.Fatalf("API did not target its worker's agent: %s", api)
+				}
 			}
 		})
 	}

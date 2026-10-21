@@ -26,6 +26,17 @@ start_bpf_mock_es() {
 	require_commands docker curl jq timeout
 	docker info > "${HUATUO_BAMAI_TEST_TMPDIR}/docker-info.log" 2>&1 \
 		|| skip "dockerd is unavailable or the Docker socket is inaccessible"
+	if [[ -n ${BPF_MOCK_ES_DIR:-} ]]; then
+		require_commands flock
+		mkdir -p "${BPF_MOCK_ES_DIR}"
+		start_bpf_mock_es_locked 9> "${BPF_MOCK_ES_DIR}/start.lock"
+	else
+		start_bpf_mock_es_locked
+	fi
+}
+
+start_bpf_mock_es_locked() {
+	if [[ -n ${BPF_MOCK_ES_DIR:-} ]]; then flock 9; fi
 	if [[ -n ${BPF_MOCK_ES_DIR:-} && -f ${BPF_MOCK_ES_DIR}/es.env ]]; then
 		source "${BPF_MOCK_ES_DIR}/es.env"
 	else

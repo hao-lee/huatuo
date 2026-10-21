@@ -35,7 +35,18 @@ storage_test_index() {
 }
 
 storage_start() {
+	if [[ ${1:-default} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then
+		require_commands flock
+		mkdir -p "${STORAGE_SHARED_DIR}"
+		storage_start_locked "$@" 9> "${STORAGE_SHARED_DIR}/start.lock"
+	else
+		storage_start_locked "$@"
+	fi
+}
+
+storage_start_locked() {
 	local profile=${1:-default} scheme=http
+	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then flock 9; fi
 	STORAGE_SHARED=false
 	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} && -f ${STORAGE_SHARED_DIR}/es.env ]]; then
 		source "${STORAGE_SHARED_DIR}/es.env"
