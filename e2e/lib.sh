@@ -25,6 +25,7 @@ k8s_create_pod() {
 	local image=$3
 	local label=$4
 	local num=$5
+	local started=${SECONDS}
 
 	for i in $(seq 1 ${num}); do
 		kubectl run "${name}-${i}" \
@@ -32,15 +33,19 @@ k8s_create_pod() {
 			--image=${image} \
 			--image-pull-policy=Never \
 			--restart=Never \
+			--overrides='{"spec":{"terminationGracePeriodSeconds":1}}' \
 			-l ${label} \
-			-- sleep infinity
+			-- sleep infinity || return $?
 	done
+	record_test_timing k8s pod_create "${started}"
 }
 
 k8s_delete_pod() {
 	local ns=$1
 	local label=$2
-	kubectl delete pod --namespace "$ns" -l "$label"
+	local started=${SECONDS}
+	kubectl delete pod --namespace "$ns" -l "$label" || return $?
+	record_test_timing k8s pod_delete "${started}"
 }
 
 # kubelet
@@ -81,6 +86,7 @@ kubelet_container_ids() {
 
 assert_kubelet_pod_count() {
 	local ns=$1 regex=$2 expect=$3 desc=${4:-"kubelet pod count"}
+	local started=${SECONDS}
 
 	_assert() {
 		local actual
@@ -97,6 +103,7 @@ assert_kubelet_pod_count() {
 
 		fatal "❌ wait timeout, kubelet pod count not expected"
 	fi
+	record_test_timing kubelet "pod_count_${expect}" "${started}"
 }
 
 huatuo_bamai_containers_present() {
@@ -116,12 +123,14 @@ huatuo_bamai_containers_present() {
 
 assert_huatuo_bamai_containers_present() {
 	local ns=$1 regex=$2 expect=$3 desc=${4:-"huatuo-bamai containers present"}
+	local started=${SECONDS}
 
 	wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		huatuo_bamai_containers_present "$ns" "$regex" "$expect" \
 		|| fatal "${desc}: matching container metadata did not become available"
+	record_test_timing huatuo containers_present "${started}"
 }
 
 huatuo_bamai_containers_absent() {
@@ -138,6 +147,7 @@ huatuo_bamai_containers_absent() {
 assert_huatuo_bamai_containers_absent() {
 	local desc=$1
 	shift
+	local started=${SECONDS}
 
 	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
@@ -152,6 +162,7 @@ assert_huatuo_bamai_containers_absent() {
 		done
 		fatal "${desc}: container API did not confirm deletion with HTTP 404"
 	fi
+	record_test_timing huatuo containers_absent "${started}"
 }
 
 e2e_test_teardown() {

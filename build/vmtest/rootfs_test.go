@@ -274,6 +274,50 @@ git() { :; }
 	}
 }
 
+func TestE2EFixturePods(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, failure := range []string{"", "run", "delete"} {
+		t.Run("fail_"+failure, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd := exec.Command("bash", "-c", `
+set -euo pipefail
+source "$ROOT_DIR/e2e/lib.sh"
+kubectl() {
+ printf '%s\n' "$*" >> "$TEST_CALLS"
+ [[ $1 != $TEST_FAILURE ]] || return 42
+}
+k8s_create_pod fixtures test busybox:1.36.1 app=test 2
+k8s_delete_pod fixtures app=test
+`)
+			calls := filepath.Join(dir, "calls")
+			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+dir,
+				"TEST_CALLS="+calls, "TEST_FAILURE="+failure)
+			out, err := cmd.CombinedOutput()
+			if failure != "" {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 42 {
+					t.Fatalf("kubectl failure was lost: %v: %s", err, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("fixture lifecycle: %v: %s", err, out)
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(string(data), `--overrides={"spec":{"terminationGracePeriodSeconds":1}}`) != 2 ||
+				!strings.Contains(string(data), "delete pod --namespace fixtures -l app=test\n") {
+				t.Fatalf("fixture pods must use a short grace period and wait for deletion: %s", data)
+			}
+		})
+	}
+}
+
 func TestIntegrationRunnerPool(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {

@@ -92,6 +92,9 @@ bash e2e/run.sh test_metrics.sh 2
 Both suites run in separate UTS and mount namespaces with hostname `huatuo-dev`
 and private mount propagation. Integration cases start their own services;
 e2e starts the baseline bamai before each case, then stops it and checks its log.
+Idle e2e fixture pods use a one-second termination grace period. Cleanup still
+waits for deletion, and discovery tests require Huatuo to remove their metadata.
+Their timings distinguish pod deletion from kubelet and Huatuo discovery waits.
 Integration removes workspaces after passed or skipped cases and preserves them
 on failure. E2E retains its workspaces.
 

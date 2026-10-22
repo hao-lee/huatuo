@@ -148,7 +148,7 @@ go_snapshot_assert_event() {
 }
 
 go_snapshot_run_case() (
-	local mode=$1 rate=1 usage_file cgroup_root triggered_at pod_name high_before
+	local mode=$1 rate=1 usage_file cgroup_root triggered_at pod_name high_before started
 	go_snapshot_pid=""
 	go_snapshot_cgroup=""
 	go_snapshot_top_k=100
@@ -194,15 +194,20 @@ go_snapshot_run_case() (
 	) < "${go_snapshot_case_dir}/commands" > "${go_snapshot_case_dir}/workload.log" 2>&1 &
 	go_snapshot_pid=$!
 
+	started=${SECONDS}
 	printf a >&"${go_snapshot_input_fd}"
 	wait_until 30 0.2 grep -qx ready "${go_snapshot_case_dir}/workload.log" || fatal "${mode}: Go allocations and GC did not finish"
+	record_test_timing "go_snapshot:${mode}" workload_ready "${started}"
 	[[ $(< "${usage_file}") -lt ${GO_SNAPSHOT_THRESHOLD} ]] \
 		|| fatal "${mode}: workload already exceeds threshold before pressure: $(< "${usage_file}")"
+	started=${SECONDS}
 	wait_until 30 0.1 go_snapshot_watch_is_ready || fatal "${mode}: memory cgroup watch was not registered"
+	record_test_timing "go_snapshot:${mode}" watch_ready "${started}"
 	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		high_before=$(awk '$1 == "high" { print $2 }' "${go_snapshot_cgroup}/memory.events")
 	fi
 
+	started=${SECONDS}
 	triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 	printf p >&"${go_snapshot_input_fd}"
 	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
@@ -213,6 +218,7 @@ go_snapshot_run_case() (
 	fi
 	wait_until 30 0.1 go_snapshot_read_event || fatal "${mode}: daemon did not persist a Go snapshot"
 	wait_until 30 0.2 grep -qx 'pressure ready' "${go_snapshot_case_dir}/workload.log" || fatal "${mode}: pressure allocation did not finish"
+	record_test_timing "go_snapshot:${mode}" capture "${started}"
 	huatuo_bamai_stop
 
 	go_snapshot_assert_event "${mode}" "${triggered_at}"
