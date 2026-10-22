@@ -239,8 +239,8 @@ func TestGuestPreparationPhases(t *testing.T) {
 		want string
 	}{
 		{"--prepare-only", "proxy\ninfo\ndependencies\ngrow\n"},
-		{"--test-only", "proxy\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1\n"},
-		{"", "proxy\ninfo\ndependencies\ngrow\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1\n"},
+		{"--test-only", "proxy\nprefetch\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1\n"},
+		{"", "proxy\ninfo\ndependencies\ngrow\nprefetch\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1\n"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			dir := t.TempDir()
@@ -256,6 +256,7 @@ print_sys_info() { echo info >> "$TEST_CALLS"; }
 install_test_dependencies() { echo dependencies >> "$TEST_CALLS"; }
 grow_root_filesystem() { echo grow >> "$TEST_CALLS"; }
 install_temporary_go_tools() { exit 99; }
+prefetch_storage_images() { echo prefetch >> "$TEST_CALLS"; }
 make() { echo "make $*" >> "$TEST_CALLS"; }
 git() { :; }
 `
@@ -269,6 +270,81 @@ git() { :; }
 			actual, err := os.ReadFile(calls)
 			if err != nil || string(actual) != tc.want {
 				t.Fatalf("calls: %q; want %q: %v", actual, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestGuestStorageImagePrefetch(t *testing.T) {
+	source, err := os.ReadFile("../../.github/workflows/scripts/vm-test/run-in-vm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.Index(source, []byte("\nconfigure_proxy\n"))
+	if end < 0 {
+		t.Fatal("guest script entry point missing")
+	}
+	storage, err := os.ReadFile("../../integration/lib_storage.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"success", "pull_failure", "test_failure"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range []string{"bin", "integration"} {
+				if err := os.Mkdir(filepath.Join(dir, name), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, "integration/lib_storage.sh"), storage, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			docker := `#!/bin/bash
+echo "$$" >> "$TEST_STATE/children"
+touch "$TEST_STATE/${2##*/}.started"
+while [[ ! -f $TEST_STATE/release ]]; do sleep 0.01; done
+[[ $TEST_MODE != pull_failure ]]
+`
+			dockerPath := filepath.Join(dir, "bin/docker")
+			if err := os.WriteFile(dockerPath, []byte(docker), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(dockerPath, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-c", string(source[:end])+`
+storage_prefetch_pids=()
+trap stop_storage_image_prefetch EXIT
+prefetch_storage_images
+for ((i=0;i<1000;i++)); do
+ [[ -f $TEST_STATE/${STORAGE_ES7_IMAGE##*/}.started && -f $TEST_STATE/${STORAGE_OPENSEARCH_IMAGE##*/}.started ]] && break
+ sleep 0.01
+done
+[[ -f $TEST_STATE/${STORAGE_ES7_IMAGE##*/}.started && -f $TEST_STATE/${STORAGE_OPENSEARCH_IMAGE##*/}.started ]]
+((${#storage_prefetch_pids[@]} == 2))
+[[ $TEST_MODE != test_failure ]] || exit 42
+touch "$TEST_STATE/release"
+for pid in "${storage_prefetch_pids[@]}"; do wait "$pid" || [[ $TEST_MODE == pull_failure ]]; done
+`)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "TEST_STATE="+dir, "TEST_MODE="+mode, "PATH="+filepath.Join(dir, "bin")+":"+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if mode == "test_failure" {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 42 {
+					t.Fatalf("prefetch cleanup lost the test failure: %v: %s", err, out)
+				}
+			} else if err != nil {
+				t.Fatalf("optional prefetch changed the test result: %v: %s", err, out)
+			}
+			children, err := os.ReadFile(filepath.Join(dir, "children"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pid := range strings.Fields(string(children)) {
+				if exec.Command("kill", "-0", pid).Run() == nil {
+					t.Fatalf("prefetch left docker process %s running", pid)
+				}
 			}
 		})
 	}

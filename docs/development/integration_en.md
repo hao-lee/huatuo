@@ -157,6 +157,9 @@ instance. Authenticated BPF mock storage and the ES8 compatibility case share
 one authenticated ES8 instance with separate indices. ES7 and OpenSearch keep
 their own instances. The first owner checks image pullability; the runner owns
 shared cleanup, and standalone scripts retain private instances.
+VM CI preloads the ES7 and OpenSearch images during compilation and unit tests.
+The compatibility test still checks pullability. Prefetch logs are saved under
+`_output/storage-image-prefetch`; failed prefetch does not replace normal checks.
 
 ---
 
