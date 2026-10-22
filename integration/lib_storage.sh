@@ -45,8 +45,9 @@ storage_start() {
 }
 
 storage_start_locked() {
-	local profile=${1:-default} scheme=http
+	local profile=${1:-default} scheme=http started=${SECONDS}
 	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then flock 9; fi
+	record_test_timing "storage:${profile}" lock_wait "${started}"
 	STORAGE_SHARED=false
 	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} && -f ${STORAGE_SHARED_DIR}/es.env ]]; then
 		source "${STORAGE_SHARED_DIR}/es.env"
@@ -86,6 +87,7 @@ storage_start_locked() {
 	esac
 
 	# Compatibility cases verify the published images, including their pullability.
+	started=${SECONDS}
 	if [[ ${profile} != default ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
 		log_info "pulling storage image: ${image}"
 		if ! timeout 5m docker pull "${image}" \
@@ -94,8 +96,10 @@ storage_start_locked() {
 			skip "failed to pull storage image: ${image}"
 		fi
 	fi
+	record_test_timing "storage:${profile}" image_pull "${started}"
 
 	# Keep failed containers available for diagnostics until explicit cleanup.
+	started=${SECONDS}
 	STORAGE_CONTAINER_ID=$(docker run --detach \
 		--publish 127.0.0.1::9200 \
 		"${environment[@]}" \
@@ -108,10 +112,13 @@ storage_start_locked() {
 	port=$(docker port "${STORAGE_CONTAINER_ID}" 9200/tcp \
 		| awk -F: 'NR == 1 { print $NF }')
 	[[ -n "${port}" ]] || fatal "failed to resolve storage port"
+	record_test_timing "storage:${profile}" container_start "${started}"
 
 	STORAGE_ADDR="${scheme}://127.0.0.1:${port}"
+	started=${SECONDS}
 	wait_until 120 2 storage_ready \
 		|| fatal "storage did not become ready at ${STORAGE_ADDR}"
+	record_test_timing "storage:${profile}" readiness "${started}"
 	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then
 		mkdir -p "${STORAGE_SHARED_DIR}" || return 1
 		printf 'STORAGE_CONTAINER_ID=%q\nSTORAGE_ADDR=%q\nSTORAGE_USERNAME=%q\nSTORAGE_PASSWORD=%q\n' \

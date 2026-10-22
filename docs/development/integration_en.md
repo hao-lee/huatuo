@@ -70,6 +70,9 @@ Shared Elasticsearch starts under a lock and remains alive until the batch
 finishes. On failure, the runner stops scheduling, waits for active cases to
 finish cleanup, and preserves failed-case logs. Results include case durations;
 full case output is saved in `test.log` and printed on failure.
+Phase measurements in `timings.log` are printed even for successful cases.
+Storage timings separate image pulls, container startup, readiness, and shared
+startup lock waits. Compatibility cases also time verification and cleanup.
 
 New tests default to serial execution. Review shared kernel state, traffic,
 paths, ports, and CPU assumptions before adding a group in `lib_runner.sh`.

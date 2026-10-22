@@ -112,6 +112,7 @@ runner_start_case() {
 runner_finish_case() {
 	local slot=$1 status=0 workspace=${runner_workspaces[$1]}
 	if [[ -n ${runner_pids[slot]} ]]; then wait "${runner_pids[slot]}" || status=$?; else status=1; fi
+	find "${workspace}" -type f -name timings.log -exec cat {} + || true
 	if [[ ${runner_suite} == e2e ]]; then
 		HUATUO_BAMAI_TEST_TMPDIR="${workspace}" e2e_test_teardown "${status}" || status=1
 		if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then

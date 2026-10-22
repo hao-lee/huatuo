@@ -324,6 +324,7 @@ case $name in
  test_metrics.sh|test_profiler_native_physical_alloc_mock.sh|test_basic_storage_opensearch_elasticsearch.sh)
   if [[ $TEST_MODE == failure ]]; then for ((n=0;n<180;n++)); do echo fixture-progress; done; fi
   echo diagnostic-from-first-case
+  record_test_timing fixture verification "$SECONDS"
   touch "$TEST_STATE/first-started"
   if [[ $TEST_MODE == refill || $TEST_MODE == failure ]]; then wait_for "$TEST_STATE/second-started"; fi
   if [[ $TEST_MODE == failure ]]; then exit 42; fi
@@ -426,6 +427,9 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 			}
 			if !strings.Contains(string(out), want) {
 				t.Fatalf("missing summary %s: %s", want, out)
+			}
+			if !strings.Contains(string(out), "subject=fixture phase=verification duration=") {
+				t.Fatalf("successful case timings were not printed: %s", out)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "exclusive-done")); err != nil {
 				t.Fatal("exclusive test did not run after the pool")

@@ -144,6 +144,11 @@ run_case() (
  mkdir -p "$HUATUO_BAMAI_TEST_TMPDIR"
  trap storage_stop EXIT
  storage_start "${2:-default}"
+ if [[ ${2:-default} != default ]]; then
+  for phase in image_pull container_start readiness; do
+   grep -q "subject=storage:$2 phase=$phase duration=" "$HUATUO_BAMAI_TEST_TMPDIR/timings.log"
+  done
+ fi
  if [[ ${2:-default} == default ]]; then
   [[ $STORAGE_ADDR == http://* && -z $STORAGE_USERNAME && -z $STORAGE_PASSWORD ]]
  else

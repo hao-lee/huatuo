@@ -36,7 +36,9 @@ start_bpf_mock_es() {
 }
 
 start_bpf_mock_es_locked() {
+	local started=${SECONDS}
 	if [[ -n ${BPF_MOCK_ES_DIR:-} ]]; then flock 9; fi
+	record_test_timing storage:mock lock_wait "${started}"
 	if [[ -n ${BPF_MOCK_ES_DIR:-} && -f ${BPF_MOCK_ES_DIR}/es.env ]]; then
 		source "${BPF_MOCK_ES_DIR}/es.env"
 	else
