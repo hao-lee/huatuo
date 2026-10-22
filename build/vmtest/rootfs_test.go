@@ -693,3 +693,118 @@ done
 		})
 	}
 }
+
+func TestIntegrationProcessShutdown(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required for the process fixture")
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		ignore string
+		status string
+	}{
+		{"graceful_failure", "False", "7"},
+		{"forced_shutdown", "True", "137"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fixture := filepath.Join(dir, "child.py")
+			if err := os.WriteFile(fixture, []byte(`import pathlib, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN if `+tc.ignore+` else lambda *_: sys.exit(7))
+pathlib.Path(sys.argv[1]).touch()
+while True:
+    time.sleep(0.01)
+`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-c", `
+source "$ROOT_DIR/integration/lib.sh"
+python3 "$FIXTURE" "$READY" &
+pid=$!
+trap 'stop_and_wait_by_pid "$pid" 1 || true' EXIT
+wait_until 5 0.1 test -f "$READY"
+status=0
+stop_and_wait_by_pid "$pid" 1 || status=$?
+[[ $status == "$EXPECTED_STATUS" ]]
+! kill -0 "$pid" 2>/dev/null
+trap - EXIT
+`)
+			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "FIXTURE="+fixture,
+				"READY="+filepath.Join(dir, "ready"), "EXPECTED_STATUS="+tc.status)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("shutdown: %v: %s", err, out)
+			}
+		})
+	}
+}
+
+func TestJavaStreamingCompletion(t *testing.T) {
+	for _, tool := range []string{"python3", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is required for the Java streaming fixture", tool)
+		}
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		windows string
+		exit    string
+		wantErr string
+	}{
+		{"complete", "2", "0", ""},
+		{"shutdown_failure", "2", "7", "exited 7"},
+		{"missing_window", "1", "0", "two Java windows not published"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fixture := filepath.Join(dir, "profiler.py")
+			if err := os.WriteFile(fixture, []byte(`import json, signal, sys, time
+
+def finish(*_):
+    print(json.dumps({"final": True, "profile": {"sample": []}}), flush=True)
+    sys.exit(`+tc.exit+`)
+
+signal.signal(signal.SIGINT, finish)
+for _ in range(`+tc.windows+`):
+    print(json.dumps({"profile": {"sample": [1]}}), flush=True)
+    time.sleep(0.05)
+while True:
+    time.sleep(0.01)
+`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-c", `
+source "$ROOT_DIR/integration/lib.sh"
+# Bound the deliberately missing-window test without changing its predicate.
+wait_until() {
+ shift 2
+ local i
+ for ((i=0; i<20; i++)); do
+  if "$@"; then return 0; fi
+  sleep 0.05
+ done
+ return 1
+}
+assert_java_profiler_streams "$TEST_OUTPUT" python3 "$FIXTURE"
+jq -se 'last.final == true' "$TEST_OUTPUT/windows.json"
+`)
+			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "FIXTURE="+fixture,
+				"TEST_OUTPUT="+filepath.Join(dir, "output"))
+			out, err := cmd.CombinedOutput()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("streaming completion: %v: %s", err, out)
+				}
+			} else if err == nil || !strings.Contains(string(out), tc.wantErr) {
+				t.Fatalf("expected %q, got %v: %s", tc.wantErr, err, out)
+			}
+		})
+	}
+}
