@@ -474,7 +474,7 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 			}
 			cmd := exec.Command("bash", args...)
 			cmd.Env = append(os.Environ(), "ROOT_DIR="+root, "HUATUO_BAMAI_TEST_TMPDIR="+workspace, "TEST_STATE="+dir,
-				"TEST_MODE="+mode, "TEST_JOBS="+jobs, "TEST_REPEATS="+repeats, "PATH="+bin+":"+os.Getenv("PATH"), "BPF_MOCK_ES_DIR=", "STORAGE_SHARED_DIR=")
+				"TEST_MODE="+mode, "TEST_JOBS="+jobs, "TEST_REPEATS="+repeats, "PATH="+bin+":"+os.Getenv("PATH"), "STORAGE_AUTH_SHARED_DIR=", "STORAGE_SHARED_DIR=")
 			out, err := cmd.CombinedOutput()
 			if mode == "failure" || mode == "cleanup failure" {
 				var exit *exec.ExitError

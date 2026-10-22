@@ -139,7 +139,7 @@ runner_finish_case() {
 runner_stop_storage() {
 	local status=$1
 	if [[ -n ${runner_last_storage} ]]; then stop_shared_storage "${status}" || runner_failed=1; fi
-	if [[ -n ${runner_last_mock} ]]; then stop_shared_bpf_mock_es "${status}" || runner_failed=1; fi
+	if [[ -n ${runner_last_auth_storage} ]]; then stop_shared_storage "${status}" "${STORAGE_AUTH_SHARED_DIR}" || runner_failed=1; fi
 }
 
 runner_cleanup() {
@@ -197,14 +197,18 @@ run_test_suite() {
 	shift 3
 	local -a scripts=("$@") parallel=() profilers=() exclusive=()
 	local script group
-	runner_last_mock="" runner_last_storage="" runner_failed=0
+	runner_last_mock="" runner_last_storage="" runner_last_auth_storage="" runner_failed=0
 	declare -ga runner_pids=() runner_workspaces=() runner_names=() runner_started=() runner_groups=()
 	source "${ROOT_DIR}/integration/bpf_mock/common/core.sh"
 	if [[ ${runner_suite} == e2e ]]; then source "${ROOT_DIR}/e2e/lib.sh"; fi
 	for script in "${scripts[@]}"; do
 		if [[ ${runner_suite} == integration ]]; then
-			if is_bpf_mock_test "${script}"; then runner_last_mock=${script}; fi
+			if is_bpf_mock_test "${script}"; then
+				runner_last_mock=${script}
+				runner_last_auth_storage=${script}
+			fi
 			case ${script##*/} in
+			test_basic_storage_opensearch_elasticsearch.sh) runner_last_auth_storage=${script} ;;
 			test_apiserver_continuous_profiling_*.sh | test_apiserver_job_recovery.sh | test_apiserver_profile_filters.sh | test_autotracing_irqtracing.sh | test_basic_elasticsearch_values.sh) runner_last_storage=${script} ;;
 			esac
 		fi
@@ -217,8 +221,11 @@ run_test_suite() {
 	done
 	if [[ -n ${runner_last_mock} ]]; then
 		export BPF_MOCK_BUILD_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-build"
-		export BPF_MOCK_ES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-es"
 		source "${ROOT_DIR}/integration/bpf_mock/common/lib.sh"
+	fi
+	if [[ -n ${runner_last_auth_storage} ]]; then
+		export STORAGE_AUTH_SHARED_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/authenticated-es"
+		source "${ROOT_DIR}/integration/lib_storage.sh"
 	fi
 	if [[ -n ${runner_last_storage} ]]; then
 		export STORAGE_SHARED_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/default-es"
@@ -249,7 +256,7 @@ run_test_suite() {
 				runner_start_case "${script}" 0 exclusive
 				runner_finish_case 0
 				((runner_failed == 0)) || exit 1
-				if [[ ${script} == "${runner_last_mock}" ]]; then stop_shared_bpf_mock_es 0; fi
+				if [[ ${script} == "${runner_last_auth_storage}" ]]; then stop_shared_storage 0 "${STORAGE_AUTH_SHARED_DIR}"; fi
 				if [[ ${script} == "${runner_last_storage}" ]]; then stop_shared_storage 0; fi
 			done
 		fi

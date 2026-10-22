@@ -35,22 +35,27 @@ storage_test_index() {
 }
 
 storage_start() {
-	if [[ ${1:-default} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then
+	local profile=${1:-default} shared_dir=""
+	case ${profile} in
+	default) shared_dir=${STORAGE_SHARED_DIR:-} ;;
+	elasticsearch_v8) shared_dir=${STORAGE_AUTH_SHARED_DIR:-} ;;
+	esac
+	if [[ -n ${shared_dir} ]]; then
 		require_commands flock
-		mkdir -p "${STORAGE_SHARED_DIR}"
-		storage_start_locked "$@" 9> "${STORAGE_SHARED_DIR}/start.lock"
+		mkdir -p "${shared_dir}"
+		storage_start_locked "${profile}" "${shared_dir}" 9> "${shared_dir}/start.lock"
 	else
-		storage_start_locked "$@"
+		storage_start_locked "${profile}"
 	fi
 }
 
 storage_start_locked() {
-	local profile=${1:-default} scheme=http started=${SECONDS}
-	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then flock 9; fi
+	local profile=${1:-default} shared_dir=${2:-} scheme=http started=${SECONDS}
+	if [[ -n ${shared_dir} ]]; then flock 9; fi
 	record_test_timing "storage:${profile}" lock_wait "${started}"
 	STORAGE_SHARED=false
-	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} && -f ${STORAGE_SHARED_DIR}/es.env ]]; then
-		source "${STORAGE_SHARED_DIR}/es.env"
+	if [[ -n ${shared_dir} && -f ${shared_dir}/es.env ]]; then
+		source "${shared_dir}/es.env"
 		STORAGE_SHARED=true
 		return 0
 	fi
@@ -119,12 +124,12 @@ storage_start_locked() {
 	wait_until 120 2 storage_ready \
 		|| fatal "storage did not become ready at ${STORAGE_ADDR}"
 	record_test_timing "storage:${profile}" readiness "${started}"
-	if [[ ${profile} == default && -n ${STORAGE_SHARED_DIR:-} ]]; then
-		mkdir -p "${STORAGE_SHARED_DIR}" || return 1
+	if [[ -n ${shared_dir} ]]; then
+		mkdir -p "${shared_dir}" || return 1
 		printf 'STORAGE_CONTAINER_ID=%q\nSTORAGE_ADDR=%q\nSTORAGE_USERNAME=%q\nSTORAGE_PASSWORD=%q\n' \
 			"${STORAGE_CONTAINER_ID}" "${STORAGE_ADDR}" "${STORAGE_USERNAME}" "${STORAGE_PASSWORD}" \
-			> "${STORAGE_SHARED_DIR}/es.env.tmp" || return 1
-		mv "${STORAGE_SHARED_DIR}/es.env.tmp" "${STORAGE_SHARED_DIR}/es.env" || return 1
+			> "${shared_dir}/es.env.tmp" || return 1
+		mv "${shared_dir}/es.env.tmp" "${shared_dir}/es.env" || return 1
 		STORAGE_SHARED=true
 	fi
 }
@@ -170,18 +175,18 @@ storage_stop() {
 }
 
 stop_shared_storage() {
-	local status=$1
-	[[ -d ${STORAGE_SHARED_DIR} ]] || return 0
-	if [[ -f ${STORAGE_SHARED_DIR}/es.env ]]; then
-		source "${STORAGE_SHARED_DIR}/es.env"
+	local status=$1 shared_dir=${2:-${STORAGE_SHARED_DIR:-}}
+	[[ -d ${shared_dir} ]] || return 0
+	if [[ -f ${shared_dir}/es.env ]]; then
+		source "${shared_dir}/es.env" || return 1
 		STORAGE_SHARED=false
 		if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then
-			storage_dump_logs "${STORAGE_SHARED_DIR}/elasticsearch.log" || true
-			log_error "shared storage artifacts: ${STORAGE_SHARED_DIR}"
+			storage_dump_logs "${shared_dir}/elasticsearch.log" || true
+			log_error "shared storage artifacts: ${shared_dir}"
 		fi
 		storage_stop || return 1
 	fi
 	if [[ ${status} -eq 0 || ${status} -eq 77 ]]; then
-		rm -rf -- "${STORAGE_SHARED_DIR}"
+		rm -rf -- "${shared_dir}"
 	fi
 }

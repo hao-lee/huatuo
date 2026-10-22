@@ -153,8 +153,10 @@ The continuous-profiling API, profile-filter, IRQ autotracing, and storage-value
 tests share one default Elasticsearch instance per suite repetition. Indices
 include each case's workspace name. The runner stops storage after the last
 selected case in this group, or on failure; standalone scripts own their own
-instance. Storage compatibility tests and authenticated BPF mock storage keep
-their separate instances and settings.
+instance. Authenticated BPF mock storage and the ES8 compatibility case share
+one authenticated ES8 instance with separate indices. ES7 and OpenSearch keep
+their own instances. The first owner checks image pullability; the runner owns
+shared cleanup, and standalone scripts retain private instances.
 
 ---
 

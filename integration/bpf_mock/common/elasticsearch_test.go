@@ -228,6 +228,8 @@ func TestMockElasticsearchLifecycle(t *testing.T) {
 	}{
 		{name: "shared", wantStart: 1, wantIndex: 2},
 		{name: "shared_concurrent", wantStart: 1, wantIndex: 2},
+		{name: "compatibility_first", wantStart: 1, wantIndex: 2},
+		{name: "compatibility_after", wantStart: 1, wantIndex: 2},
 		{name: "private", wantStart: 2, wantIndex: 2},
 		{name: "shared_failure", wantExit: 1, wantStart: 1, wantIndex: 2},
 		{name: "shared_index_failure", wantExit: 1, wantStart: 1},
@@ -239,7 +241,7 @@ func TestMockElasticsearchLifecycle(t *testing.T) {
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
 if [[ $TEST_MODE != private ]]; then
- export BPF_MOCK_ES_DIR="$HUATUO_BAMAI_TEST_TMPDIR/shared-es"
+ export STORAGE_AUTH_SHARED_DIR="$HUATUO_BAMAI_TEST_TMPDIR/shared-es"
 fi
 stub_storage() {
  printf() {
@@ -250,21 +252,18 @@ stub_storage() {
   builtin printf "$@"
  }
  require_commands() { :; }
- docker() { [[ $1 != logs ]] || printf 'shared ES diagnostics\n'; }
- storage_start() {
-  [[ $1 == elasticsearch_v8 ]]
-  [[ $TEST_MODE != shared_concurrent ]] || sleep 0.05
-  printf 'start\n' >> "$TEST_LOG"
-  STORAGE_CONTAINER_ID=mock-container
-  STORAGE_ADDR=https://127.0.0.1:9200
-  STORAGE_USERNAME=elastic
-  STORAGE_PASSWORD=123456
+ docker() {
+  case $1 in
+   info|image|pull) return 0;;
+   run) [[ $TEST_MODE != shared_concurrent ]] || sleep 0.05; printf 'start\n' >> "$TEST_LOG"; echo mock-container;;
+   port) echo '127.0.0.1:19200';;
+   rm) printf 'stop\n' >> "$TEST_LOG";;
+   logs) printf 'shared ES diagnostics\n';;
+   *) return 1;;
+  esac
  }
- storage_stop() {
-  [[ -n $STORAGE_CONTAINER_ID ]] || return 0
-  printf 'stop\n' >> "$TEST_LOG"
-  STORAGE_CONTAINER_ID=""
- }
+ storage_ready() { return 0; }
+ timeout() { shift; "$@"; }
  storage_curl() {
   [[ $TEST_MODE != shared_index_failure ]] || return 1
   printf 'index %s\n' "$STORAGE_INDEX" >> "$TEST_LOG"
@@ -273,10 +272,10 @@ stub_storage() {
 }
 finish_shared() {
  local status=$?
- [[ -n $BPF_MOCK_ES_DIR ]] || return 0
+ [[ -n $STORAGE_AUTH_SHARED_DIR ]] || return 0
  source "$ROOT_DIR/integration/bpf_mock/common/elasticsearch.sh"
  stub_storage
- stop_shared_bpf_mock_es "$status"
+ stop_shared_storage "$status" "$STORAGE_AUTH_SHARED_DIR"
 }
 trap finish_shared EXIT
 run_case() (
@@ -289,6 +288,17 @@ run_case() (
  start_bpf_mock_es
  write_bpf_mock_es_config memory_oom_kill
 )
+run_compatibility() (
+ export HUATUO_BAMAI_TEST_TMPDIR="$HUATUO_BAMAI_TEST_TMPDIR/compatibility"
+ mkdir -p "$HUATUO_BAMAI_TEST_TMPDIR"
+ source "$ROOT_DIR/integration/lib_storage.sh"
+ stub_storage
+ trap storage_stop EXIT
+ storage_start elasticsearch_v8
+ [[ $STORAGE_ADDR == https://* && $STORAGE_USERNAME == elastic && $STORAGE_PASSWORD == 123456 ]]
+ [[ $STORAGE_SHARED == true ]]
+)
+if [[ $TEST_MODE == compatibility_first ]]; then run_compatibility; fi
 if [[ $TEST_MODE == shared_concurrent ]]; then
  run_case case-one.Abc & first=$!
  run_case case-two.Xyz & second=$!
@@ -298,10 +308,11 @@ else
  run_case case-one.Abc
  run_case case-two.Xyz
 fi
+if [[ $TEST_MODE == compatibility_after ]]; then run_compatibility; fi
 [[ $TEST_MODE != shared_failure ]] || exit 1
 `)
 			cmd.Env = append(os.Environ(), "ROOT_DIR="+root,
-				"HUATUO_BAMAI_TEST_TMPDIR="+workspace, "BPF_MOCK_ES_DIR=",
+				"HUATUO_BAMAI_TEST_TMPDIR="+workspace, "STORAGE_AUTH_SHARED_DIR=",
 				"TEST_LOG="+filepath.Join(workspace, "lifecycle.log"), "TEST_MODE="+tc.name)
 			output, err := cmd.CombinedOutput()
 			if tc.wantExit == 0 {

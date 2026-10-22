@@ -26,7 +26,7 @@ source "${ROOT_DIR}/integration/config.sh"
 
 # Bash does not export the runner's timeout array to child shells.
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
-readonly STORAGE_INDEX=huatuo_storage_consistency
+readonly STORAGE_INDEX=$(storage_test_index huatuo_storage_consistency)
 
 require_commands docker curl jq timeout ss
 # These dependencies apply to all backends; a missing one skips the whole matrix.
