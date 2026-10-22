@@ -323,7 +323,7 @@ func TestIntegrationRunnerPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"refill", "resource", "storage", "failure", "skip", "serial", "repeated", "cleanup failure"} {
+	for _, mode := range []string{"refill", "resource", "storage", "profiler", "failure", "skip", "serial", "repeated", "cleanup failure"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			workspace := filepath.Join(dir, "workspace")
@@ -356,6 +356,9 @@ func TestIntegrationRunnerPool(t *testing.T) {
 			if mode == "storage" {
 				names = []string{"test_basic_storage_opensearch_elasticsearch.sh", "test_dropwatch_icmpv6.sh", "test_metrics_include_filter.sh", "test_metrics_exclude_filter.sh", "test_unknown.sh"}
 			}
+			if mode == "profiler" {
+				names = []string{"test_metrics.sh", "test_profiler_java_cpu_multi_pid.sh", "test_profiler_java_memory_usage_alloc.sh", "test_profiler_native_cpu.sh", "test_profiler_native_cpu_cpp_symbols.sh", "test_profiler_native_cpu_hardware_pmu.sh"}
+			}
 			const script = `
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
@@ -364,6 +367,31 @@ wait_for() {
  for ((i=0;i<300;i++)); do [[ -f $1 ]] && return 0; sleep 0.01; done
  echo "timed out: $1" >&2; return 1
 }
+if [[ $TEST_MODE == profiler ]]; then
+ case $name in
+  test_metrics.sh) touch "$TEST_STATE/pool-done";;
+  test_profiler_java_cpu_multi_pid.sh)
+   [[ -f $TEST_STATE/pool-done ]]
+   touch "$TEST_STATE/first-started"
+   wait_for "$TEST_STATE/second-started"
+   touch "$TEST_STATE/first-done";;
+  test_profiler_native_cpu.sh)
+   [[ -f $TEST_STATE/pool-done ]]
+   touch "$TEST_STATE/second-started"
+   wait_for "$TEST_STATE/first-started"
+   touch "$TEST_STATE/second-done";;
+  test_profiler_java_memory_usage_alloc.sh)
+   [[ -f $TEST_STATE/first-done ]]
+   touch "$TEST_STATE/third-done";;
+  test_profiler_native_cpu_cpp_symbols.sh)
+   [[ -f $TEST_STATE/first-done || -f $TEST_STATE/second-done ]]
+   touch "$TEST_STATE/fourth-done";;
+  test_profiler_native_cpu_hardware_pmu.sh)
+   [[ -f $TEST_STATE/first-done && -f $TEST_STATE/second-done && -f $TEST_STATE/third-done && -f $TEST_STATE/fourth-done ]]
+   touch "$TEST_STATE/exclusive-done";;
+ esac
+ exit 0
+fi
 case $name in
  test_metrics.sh|test_profiler_native_physical_alloc_mock.sh|test_basic_storage_opensearch_elasticsearch.sh)
   if [[ $TEST_MODE == failure ]]; then for ((n=0;n<180;n++)); do echo fixture-progress; done; fi
@@ -412,6 +440,14 @@ esac
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
 source "$ROOT_DIR/integration/lib_runner.sh"
+if [[ $TEST_MODE == profiler ]]; then
+ eval "$(declare -f runner_start_case | sed '1s/runner_start_case/launch_fixture_case/')"
+ runner_start_case() {
+  launch_fixture_case "$@"
+  # The main pool has three slots; profiler scheduling must cap active cases at two.
+  ((${#runner_pids[@]} <= 2))
+ }
+fi
 if [[ $TEST_MODE == failure ]]; then
  huatuo_bamai_stop() {
   if [[ $1 == */test_metrics.* ]]; then touch "$TEST_STATE/first-cleaned"; fi
@@ -427,7 +463,7 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 				args = append(args, path)
 			}
 			jobs, repeats := "2", "1"
-			if mode == "storage" {
+			if mode == "storage" || mode == "profiler" {
 				jobs = "3"
 			}
 			if mode == "repeated" {
@@ -463,6 +499,9 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 			if mode == "storage" {
 				want = "total=5 passed=5 skipped=0 failed=0"
 			}
+			if mode == "profiler" {
+				want = "total=6 passed=6 skipped=0 failed=0"
+			}
 			if mode == "repeated" {
 				want = "total=8 passed=8 skipped=0 failed=0"
 			}
@@ -472,7 +511,7 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 			if !strings.Contains(string(out), want) {
 				t.Fatalf("missing summary %s: %s", want, out)
 			}
-			if !strings.Contains(string(out), "subject=fixture phase=verification duration=") {
+			if mode != "profiler" && !strings.Contains(string(out), "subject=fixture phase=verification duration=") {
 				t.Fatalf("successful case timings were not printed: %s", out)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "exclusive-done")); err != nil {

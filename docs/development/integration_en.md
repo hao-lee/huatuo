@@ -60,8 +60,12 @@ resource group serialize. Physical allocation/usage mocks share a group because
 their hook symbols overlap. Network tests share a group for traffic and device
 isolation. Storage compatibility uses the network group and tests its three
 backends sequentially, overlapping other groups without starting three backend
-containers together. CPU-sensitive and unreviewed tests run alone after the pool
-drains. E2E remains serial, including when `INTEGRATION_JOBS` is set.
+containers together. Reviewed standalone profiler tests run in a separate pool
+of at most two workers after shared Elasticsearch shuts down. Java cases share
+an agent library path and serialize within that pool. Benchmarks, PMU,
+CPU-pinned, and unreviewed tests run alone afterward. Profiling durations and
+assertions are unchanged. E2E remains serial, including when `INTEGRATION_JOBS`
+is set.
 
 Each worker reserves ports from its own range. Each parallel case gets a private
 mount namespace for Huatuo's PID files and toolstream socket, while retaining
