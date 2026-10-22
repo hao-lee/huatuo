@@ -808,3 +808,119 @@ jq -se 'last.final == true' "$TEST_OUTPUT/windows.json"
 		})
 	}
 }
+
+func TestNetworkCaptureCompletion(t *testing.T) {
+	for _, tool := range []string{"jq", "awk"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is required for the network capture fixture", tool)
+		}
+	}
+	const ipv4TCP = `{"drop_source":"software","netdev_name":"lo","layers":{"label":"IPv4/TCP","ipv4":{"version":4,"ihl":6,"len":44,"tos":16,"id":4885,"flags":"DF","ttl":64,"saddr":"127.0.0.2","daddr":"127.0.0.1","protocol":"TCP"},"tcp":{"sport":20001,"dport":20002,"flags":"SYN","seq":1,"data_offset":5}}}`
+	const ipv4UDP = `{"drop_source":"software","netdev_name":"lo","layers":{"label":"IPv4/UDP","ipv4":{"version":4,"ihl":6,"len":32,"tos":16,"id":4885,"flags":"DF","ttl":64,"saddr":"127.0.0.2","daddr":"127.0.0.1","protocol":"UDP"},"udp":{"sport":20001,"dport":20002,"len":8}}}`
+	ipv4MaxTCP := strings.ReplaceAll(strings.ReplaceAll(ipv4TCP, `"ihl":6`, `"ihl":15`), `"len":44`, `"len":80`)
+	const icmp = `{"layers":{"label":"IPv6/ICMPv6","icmp":{"type":"EchoRequest","id":4660,"seq":7},"ipv6":{"saddr":"2001:db8::2","daddr":"2001:db8::1"}}}`
+	const icmpZero = `{"layers":{"label":"IPv6/ICMPv6","icmp":{"type":"EchoRequest"},"ipv6":{"saddr":"2001:db8::2","daddr":"2001:db8::1"}}}`
+	const latency = `{"tracer_data":{"tcp_saddr":"192.0.2.1","tcp_daddr":"192.0.2.2","latency_stage":"receive","latency_ms":2,"latency_threshold_ms":1,"packet_len_bytes":64,"net_namespace_inum":1,"net_namespace_cookie":1}}`
+	for _, tc := range []struct {
+		name      string
+		file      string
+		functions []string
+		setup     string
+		check     string
+		valid     string
+		invalid   []string
+	}{
+		{
+			name: "ipv4_options", file: "test_dropwatch_ipv4_options.sh",
+			functions: []string{"ipv4_options_packet_matches", "ipv4_options_capture_is_complete"},
+			setup:     `IPV4_OPTIONS_SOURCE=127.0.0.2; IPV4_OPTIONS_DESTINATION=127.0.0.1; ipv4_options_source_port=20001; ipv4_options_destination_port=20002`,
+			check:     "ipv4_options_capture_is_complete",
+			valid:     ipv4TCP + "\n" + ipv4UDP + "\n" + ipv4MaxTCP,
+			invalid: []string{
+				ipv4TCP + "\n" + ipv4UDP,
+				ipv4TCP + "\n" + ipv4MaxTCP,
+				strings.ReplaceAll(ipv4TCP+"\n"+ipv4UDP+"\n"+ipv4MaxTCP, `"dport":20002`, `"dport":20003`),
+			},
+		},
+		{
+			name: "icmpv6_json", file: "test_dropwatch_icmpv6.sh",
+			functions: []string{"icmpv6_json_matches"},
+			check:     `icmpv6_json_matches "$TOOL_OUT" EchoRequest 2001:db8::2 2001:db8::1 4660 7`,
+			valid:     icmp,
+			invalid:   []string{strings.ReplaceAll(icmp, `"id":4660`, `"id":4661`), strings.ReplaceAll(icmp, "EchoRequest", "EchoReply")},
+		},
+		{
+			name: "icmpv6_zero", file: "test_dropwatch_icmpv6.sh",
+			functions: []string{"icmpv6_json_matches"},
+			check:     `icmpv6_json_matches "$TOOL_OUT" EchoRequest 2001:db8::2 2001:db8::1 0 0`,
+			valid:     icmpZero,
+			invalid:   []string{strings.ReplaceAll(icmpZero, `"type":"EchoRequest"`, `"type":"EchoRequest","id":0`)},
+		},
+		{
+			name: "icmpv6_text", file: "test_dropwatch_icmpv6.sh",
+			functions: []string{"icmpv6_text_matches"},
+			check:     `icmpv6_text_matches "$TOOL_OUT" EchoReply 2001:db8::1 2001:db8::2 4660 7`,
+			valid:     "timestamp IPv6/ICMPv6 2001:db8::1 > 2001:db8::2 type=EchoReply id=4660 seq=7 stack\n",
+			invalid:   []string{"timestamp IPv6/ICMPv6 2001:db8::2 > 2001:db8::1 type=EchoReply id=4660 seq=7 stack\n"},
+		},
+		{
+			name: "fast_retransmit", file: "test_tcpshark_retransmit_fast.sh",
+			functions: []string{"fast_retransmit_is_stored"},
+			setup:     `TEST_PORT=19998`,
+			check:     "fast_retransmit_is_stored",
+			valid:     `{"tcp_sport":19998,"tcp_reason":"fast_retransmit"}`,
+			invalid: []string{
+				`{"tcp_sport":19999,"tcp_reason":"fast_retransmit"}`,
+				`{"tcp_sport":19998,"tcp_reason":"unknown"}`,
+				`{"tcp_sport":19998,"tcp_reason":"RTO"}`,
+				`{"tcp_sport":19998,"ca_state":3}`,
+			},
+		},
+		{
+			name: "net_rx_latency", file: "test_events_net_rx_latency.sh",
+			functions: []string{"net_rx_latency_event_is_stored"},
+			setup:     `NETNS_CLIENT_ADDR=192.0.2.1; NETNS_SERVER_ADDR=192.0.2.2; EVENTS_FILE=$TOOL_OUT`,
+			check:     "net_rx_latency_event_is_stored",
+			valid:     latency,
+			invalid:   []string{strings.ReplaceAll(latency, `"latency_stage":"receive"`, `"latency_stage":null`), strings.ReplaceAll(latency, "192.0.2.1", "192.0.2.3")},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("../../integration", tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var functions strings.Builder
+			for _, name := range tc.functions {
+				start := bytes.Index(source, []byte("\n"+name+"() {"))
+				if start < 0 {
+					t.Fatalf("function %s missing", name)
+				}
+				body := source[start+1:]
+				end := bytes.Index(body, []byte("\n}\n"))
+				if end < 0 {
+					t.Fatalf("function %s has no closing brace", name)
+				}
+				functions.Write(body[:end+3])
+			}
+			dir := t.TempDir()
+			invalid := []string{""}
+			if tc.name != "icmpv6_text" {
+				invalid = append(invalid, tc.valid+"\n{")
+			}
+			invalid = append(invalid, tc.invalid...)
+			for i, fixture := range append([]string{tc.valid}, invalid...) {
+				path := filepath.Join(dir, "events.json")
+				if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+functions.String()+"\n"+tc.setup+"\n"+tc.check)
+				cmd.Env = append(os.Environ(), "TOOL_OUT="+path, "OUTPUT_DIR="+dir)
+				out, err := cmd.CombinedOutput()
+				if (err == nil) != (i == 0) {
+					t.Fatalf("fixture %d: expected match=%t, got %v: %s", i, i == 0, err, out)
+				}
+			}
+		})
+	}
+}

@@ -66,28 +66,28 @@ for i in $(seq 1 5); do
 		>> "${WORK_DIR}/curl.log" 2>&1 || true
 done
 
-sleep 5
-
 EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
-[[ -f "${EVENTS_FILE}" ]] || fatal "no events file: ${EVENTS_FILE}"
-
-# Filter events matching our veth IP pair, then validate.
-MATCHED=$(jq -s --arg saddr "${NETNS_CLIENT_ADDR}" --arg daddr "${NETNS_SERVER_ADDR}" \
-	'[.[] | select(
-		(.tracer_data.tcp_saddr == $saddr)
-		and (.tracer_data.tcp_daddr == $daddr)
-		and (.tracer_data.latency_stage | type == "string")
-		and (.tracer_data.latency_ms | type == "number")
-		and (.tracer_data.latency_threshold_ms | type == "number")
-		and (.tracer_data.packet_len_bytes | type == "number")
-		and (.tracer_data.net_namespace_inum | type == "number")
-		and (.tracer_data.net_namespace_cookie | type == "number")
-		and (.tracer_data | has("lat_stage") | not)
-		and (.tracer_data | has("lat_ms") | not)
-		and (.tracer_data | has("lat_thresholds") | not)
-		and (.tracer_data | has("pkt_len") | not)
-	)]' \
-	"${EVENTS_FILE}" 2> /dev/null)
+net_rx_latency_event_is_stored() {
+	[[ -s "${EVENTS_FILE}" ]] || return 1
+	MATCHED=$(jq -s --arg saddr "${NETNS_CLIENT_ADDR}" --arg daddr "${NETNS_SERVER_ADDR}" \
+		'[.[] | select(
+			(.tracer_data.tcp_saddr == $saddr)
+			and (.tracer_data.tcp_daddr == $daddr)
+			and (.tracer_data.latency_stage | type == "string")
+			and (.tracer_data.latency_ms | type == "number")
+			and (.tracer_data.latency_threshold_ms | type == "number")
+			and (.tracer_data.packet_len_bytes | type == "number")
+			and (.tracer_data.net_namespace_inum | type == "number")
+			and (.tracer_data.net_namespace_cookie | type == "number")
+			and (.tracer_data | has("lat_stage") | not)
+			and (.tracer_data | has("lat_ms") | not)
+			and (.tracer_data | has("lat_thresholds") | not)
+			and (.tracer_data | has("pkt_len") | not)
+		)]' \
+		"${EVENTS_FILE}" 2> /dev/null) || return 1
+	jq -e 'length > 0' <<< "${MATCHED}" > /dev/null
+}
+wait_until 5 0.1 net_rx_latency_event_is_stored || fatal "no matching net_rx_latency event persisted"
 
 event_count=$(echo "${MATCHED}" | jq 'length' 2> /dev/null || echo 0)
 event_count=$(echo "${event_count}" | tr -d '[:space:]')
