@@ -16,7 +16,8 @@
 
 # Compare localfile event counts with three remote storage backends.
 # Dropwatch supplies input; packet decoding and drop reasons have their own tests.
-# The runner executes cases serially on a host without another bamai instance.
+# The network resource group excludes competing traffic tests. Backends run
+# sequentially so only one compatibility storage container is live at a time.
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"

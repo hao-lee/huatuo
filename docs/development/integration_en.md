@@ -55,11 +55,13 @@ bash integration/run.sh -j 2
 INTEGRATION_JOBS=2 make integration
 ```
 
-VM CI uses two workers. Reviewed tests run in a bounded pool; cases in the same
+VM CI uses three workers. Reviewed tests run in a bounded pool; cases in the same
 resource group serialize. Physical allocation/usage mocks share a group because
 their hook symbols overlap. Network tests share a group for traffic and device
-isolation. CPU-sensitive and unreviewed tests run alone after the pool drains.
-E2E remains serial, including when `INTEGRATION_JOBS` is set.
+isolation. Storage compatibility uses the network group and tests its three
+backends sequentially, overlapping other groups without starting three backend
+containers together. CPU-sensitive and unreviewed tests run alone after the pool
+drains. E2E remains serial, including when `INTEGRATION_JOBS` is set.
 
 Each worker reserves ports from its own range. Each parallel case gets a private
 mount namespace for Huatuo's PID files and toolstream socket, while retaining

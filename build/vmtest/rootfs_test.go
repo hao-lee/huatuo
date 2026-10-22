@@ -279,7 +279,7 @@ func TestIntegrationRunnerPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"refill", "resource", "failure", "skip", "serial", "repeated", "cleanup failure"} {
+	for _, mode := range []string{"refill", "resource", "storage", "failure", "skip", "serial", "repeated", "cleanup failure"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			workspace := filepath.Join(dir, "workspace")
@@ -309,6 +309,9 @@ func TestIntegrationRunnerPool(t *testing.T) {
 			if mode == "resource" {
 				names = []string{"test_profiler_native_physical_alloc_mock.sh", "test_profiler_native_physical_usage_mock.sh", "test_profiler_native_virtual_alloc_mock.sh", "test_unknown.sh"}
 			}
+			if mode == "storage" {
+				names = []string{"test_basic_storage_opensearch_elasticsearch.sh", "test_dropwatch_icmpv6.sh", "test_metrics_include_filter.sh", "test_metrics_exclude_filter.sh", "test_unknown.sh"}
+			}
 			const script = `
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
@@ -318,7 +321,7 @@ wait_for() {
  echo "timed out: $1" >&2; return 1
 }
 case $name in
- test_metrics.sh|test_profiler_native_physical_alloc_mock.sh)
+ test_metrics.sh|test_profiler_native_physical_alloc_mock.sh|test_basic_storage_opensearch_elasticsearch.sh)
   if [[ $TEST_MODE == failure ]]; then for ((n=0;n<180;n++)); do echo fixture-progress; done; fi
   echo diagnostic-from-first-case
   touch "$TEST_STATE/first-started"
@@ -326,11 +329,16 @@ case $name in
   if [[ $TEST_MODE == failure ]]; then exit 42; fi
   if [[ $TEST_MODE == refill ]]; then wait_for "$TEST_STATE/third-done"; fi
   if [[ $TEST_MODE == resource ]]; then wait_for "$TEST_STATE/third-started"; fi
+  if [[ $TEST_MODE == storage ]]; then
+   wait_for "$TEST_STATE/third-started"
+   wait_for "$TEST_STATE/fourth-started"
+   [[ ! -f $TEST_STATE/second-started ]]
+  fi
   touch "$TEST_STATE/first-done"
   if [[ $TEST_MODE == skip ]]; then exit 77; fi
   ;;
- test_node_config_api.sh|test_profiler_native_physical_usage_mock.sh)
-  if [[ $TEST_MODE == serial || $TEST_MODE == resource ]]; then [[ -f $TEST_STATE/first-done ]]; fi
+ test_node_config_api.sh|test_profiler_native_physical_usage_mock.sh|test_dropwatch_icmpv6.sh)
+  if [[ $TEST_MODE == serial || $TEST_MODE == resource || $TEST_MODE == storage ]]; then [[ -f $TEST_STATE/first-done ]]; fi
   touch "$TEST_STATE/second-started"
   trap 'touch "$TEST_STATE/second-cleaned"' EXIT
   if [[ $TEST_MODE == failure ]]; then wait_for "$TEST_STATE/first-cleaned"; fi
@@ -339,11 +347,18 @@ case $name in
  test_metrics_include_filter.sh|test_profiler_native_virtual_alloc_mock.sh)
   [[ $TEST_MODE != failure ]] || touch "$TEST_STATE/unexpected-start"
   touch "$TEST_STATE/third-started"
+  if [[ $TEST_MODE == storage ]]; then wait_for "$TEST_STATE/fourth-started"; fi
   if [[ $TEST_MODE == refill ]]; then [[ -f $TEST_STATE/second-done && ! -f $TEST_STATE/first-done ]]; fi
   touch "$TEST_STATE/third-done"
   ;;
+ test_metrics_exclude_filter.sh)
+  touch "$TEST_STATE/fourth-started"
+  wait_for "$TEST_STATE/third-started"
+  touch "$TEST_STATE/fourth-done"
+  ;;
  test_unknown.sh)
   [[ -f $TEST_STATE/first-done && -f $TEST_STATE/second-done && -f $TEST_STATE/third-done ]]
+  if [[ $TEST_MODE == storage ]]; then [[ -f $TEST_STATE/fourth-done ]]; fi
   touch "$TEST_STATE/exclusive-done"
   ;;
 esac
@@ -367,6 +382,9 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 				args = append(args, path)
 			}
 			jobs, repeats := "2", "1"
+			if mode == "storage" {
+				jobs = "3"
+			}
 			if mode == "repeated" {
 				repeats = "2"
 			}
@@ -397,6 +415,9 @@ run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 				t.Fatalf("pool: %v: %s", err, out)
 			}
 			want := "total=4 passed=4 skipped=0 failed=0"
+			if mode == "storage" {
+				want = "total=5 passed=5 skipped=0 failed=0"
+			}
 			if mode == "repeated" {
 				want = "total=8 passed=8 skipped=0 failed=0"
 			}
