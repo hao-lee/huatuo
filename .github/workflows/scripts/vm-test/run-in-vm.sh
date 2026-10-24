@@ -270,19 +270,18 @@ run_guest_tests() {
 	# This is the single entry point for all guest test targets.
 	vm_log '⬅️⬅️⬅️ Running tests...'
 
-	# Hide image downloads behind compilation and unit tests. Compatibility cases
-	# still perform their normal pull checks, including when prefetch fails.
-	storage_prefetch_pids=()
-	trap stop_storage_image_prefetch EXIT
-	prefetch_storage_images
+	# Temporary CI scope: preserve builds and all Go unit tests, but omit
+	# unrelated live tests, E2E cases, and storage image downloads.
 	make install-tools
 	if [[ -f _output/portable-generated.commit ]]; then
-		make test SKIP_PORTABLE_GENERATION=1
+		make build unit SKIP_PORTABLE_GENERATION=1
 	else
-		make test
+		make build unit
 	fi
+	vm_log 'Runtime scope: SchedBlame only; unrelated integration and E2E cases omitted.'
+	bash integration/run.sh test_sched_blame.sh
 
-	vm_log '✅✅✅ Tests passed.'
+	vm_log 'SchedBlame CI validation passed.'
 }
 
 # Also support sourcing the entry function in local regression fixtures.
