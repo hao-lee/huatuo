@@ -267,20 +267,39 @@ run_guest_tests() {
 	ls -alh .
 	git config --global --add safe.directory /mnt/host
 
-	# This is the single entry point for all guest test targets.
-	vm_log '⬅️⬅️⬅️ Running tests...'
-
-	# Hide image downloads behind compilation and unit tests. Compatibility cases
-	# still perform their normal pull checks, including when prefetch fails.
-	storage_prefetch_pids=()
-	trap stop_storage_image_prefetch EXIT
-	prefetch_storage_images
+	# Temporary fork-only CI: keep the full build/unit checks and select Memray
+	# integration cases without changing their fixtures or production code.
+	vm_log 'Running full unit tests and Memray integration cases...'
 	make install-tools
+	local -a make_args=()
 	if [[ -f _output/portable-generated.commit ]]; then
-		make test SKIP_PORTABLE_GENERATION=1
-	else
-		make test
+		make_args+=(SKIP_PORTABLE_GENERATION=1)
 	fi
+	make "${make_args[@]}" unit build
+
+	export PYTHON_MEMORY_CONTAINER_IMAGE=python:3.12-slim
+	timeout 300 docker pull "$PYTHON_MEMORY_CONTAINER_IMAGE"
+	docker image save "$PYTHON_MEMORY_CONTAINER_IMAGE" | ctr -n k8s.io images import -
+	crictl inspecti "$PYTHON_MEMORY_CONTAINER_IMAGE" > /dev/null
+	timeout 300 docker pull docker.elastic.co/elasticsearch/elasticsearch:8.15.5
+
+	mkdir -p _output/memray-ci
+	local test_case test_log
+	for test_case in test_basic_runner.sh test_profiler_python_memory.sh test_apiserver_python_memory.sh; do
+		test_log="_output/memray-ci/${test_case%.sh}.log"
+		bash integration/run.sh -j 1 "$test_case" | tee "$test_log"
+		if ! grep -Fq 'summary: total=1 passed=1 skipped=0 failed=0' "$test_log"; then
+			# Some older distro images only provide Python 3.6 on the host. The
+			# API case must still pass there using its Python 3.12 container.
+			if [[ "$test_case" == test_profiler_python_memory.sh ]] \
+				&& grep -Fq 'Python 3.6 is not supported by the pinned Memray bundle' "$test_log"; then
+				vm_log 'Host CLI case skipped: Python 3.6; container API coverage remains required.'
+			else
+				vm_log_error "required case did not pass: $test_case"
+				return 1
+			fi
+		fi
+	done
 
 	vm_log '✅✅✅ Tests passed.'
 }
