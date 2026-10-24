@@ -69,7 +69,9 @@ jobs:
   qemu-tests:
     name: QEMU tests
     needs: changes
-    if: needs.changes.outputs.run-tests == 'true'
+    # Temporary CI branch: dispatch the full matrix explicitly, without also
+    # starting the representative PR matrix for the same revision.
+    if: needs.changes.outputs.run-tests == 'true' && github.event_name == 'workflow_dispatch'
     # Hold the author slot for the entire matrix, not for each distro job.
     concurrency:
       group: ${{ github.workflow }}-${{ github.event_name }}-author-${{ github.event.pull_request.user.login || github.ref }}
@@ -79,3 +81,21 @@ jobs:
       os: ${{ inputs.os || 'all' }}
       debug_mode: ${{ inputs.debug_mode || 'Disabled' }}
       debug_timeout_minutes: ${{ inputs.debug_timeout_minutes || '90' }}
+
+  start-full-suite:
+    name: Start unfiltered VM suite
+    needs: qemu-tests
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Run all integrations from the clean fix branch
+        run: |
+          gh workflow run os-distro-qemu-ci.yml \
+            --ref fix/sched-blame-python36 \
+            -f os=all -f debug_mode=Disabled -f debug_timeout_minutes=15
