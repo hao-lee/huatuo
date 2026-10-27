@@ -96,7 +96,7 @@ assert_burst_count() {
 }
 
 assert_burst_cooldown() {
-	(($(date +%s) - memburst_first_started < 28)) || fatal "cooldown assertion exceeded budget"
+	(($(date +%s) - memburst_first_started < burst_cooldown - 2)) || fatal "cooldown assertion exceeded budget"
 	assert_burst_count 1 "cooldown did not suppress burst"
 }
 
@@ -118,7 +118,8 @@ burst_top=10
 burst_threshold=10
 burst_anon=0
 burst_blacklist=0
-burst_cooldown=30
+# Leave time for suppression checks before testing recovery after cooldown.
+burst_cooldown=15
 burst_window=2
 burst_write_config() {
 	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
@@ -253,7 +254,8 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 		burst_wait_samples high 3
 		assert_burst_count 0 "default history triggered before filling"
 		burst_input low
-		wait_until 90 .2 memsnapshot_memburst_samples_ready "${burst_sample_offset}" 60 100000 \
+		# Earlier low/high samples also belong to the default history.
+		wait_until 90 .2 memsnapshot_memburst_samples_ready 0 60 \
 			|| fatal "default memburst history did not fill"
 	fi
 	[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low
@@ -278,7 +280,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 			burst_wait_samples high 3
 			assert_burst_cooldown
 			burst_input low
-			wait_until 35 .2 memsnapshot_cooldown_elapsed "${memburst_first_at}" 31 \
+			wait_until "$((burst_cooldown + 5))" .2 memsnapshot_cooldown_elapsed "${memburst_first_at}" "$((burst_cooldown + 1))" \
 				|| fatal "memburst cooldown deadline was not reached"
 			burst_input high
 			wait_until 20 .1 burst_expected_count 2 || fatal "capture did not recover after cooldown"
@@ -407,6 +409,7 @@ assert_burst_storage_failure() {
 	grep -F 'msg="save memburst snapshot"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" | grep -Fq 'not a directory' || fatal "storage failure diagnostic missing expected cause"
 }
 
+# A two-sample window needs one low sample before each high transition.
 for memburst_runtime in go disabled churn python java c cpp; do
 	case ${memburst_runtime} in
 	python) command -v python3 > /dev/null || {
@@ -435,7 +438,7 @@ for memburst_runtime in go disabled churn python java c cpp; do
 	if [[ ${memburst_runtime} == go ]]; then
 		if [[ -d ${HUATUO_BAMAI_TEST_TMPDIR}/events ]]; then rmdir "${HUATUO_BAMAI_TEST_TMPDIR}/events"; fi
 		: > "${HUATUO_BAMAI_TEST_TMPDIR}/events"
-		burst_wait_samples low
+		burst_wait_samples low 1
 		burst_input high
 		wait_until 30 .1 grep -Fq 'msg="save memburst snapshot"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 			|| fatal "storage obstruction did not produce a diagnostic"
@@ -448,7 +451,7 @@ for memburst_runtime in go disabled churn python java c cpp; do
 	burst_rounds=1
 	[[ ${memburst_runtime} != churn ]] || burst_rounds=12
 	for ((burst_round = 1; burst_round <= burst_rounds; burst_round++)); do
-		burst_wait_samples low
+		burst_wait_samples low 1
 		burst_input high
 		wait_until 30 .1 burst_expected_count "${burst_round}" || fatal "${memburst_runtime}: capture ${burst_round} missing"
 		assert_burst_runtime "${memburst_runtime}" "${burst_round}"
@@ -468,7 +471,7 @@ for memburst_runtime in go disabled churn python java c cpp; do
 	burst_workloads=()
 	mv "${HUATUO_BAMAI_TEST_TMPDIR}/commands" "${HUATUO_BAMAI_TEST_TMPDIR}/old-commands"
 	burst_start_runtime go
-	burst_wait_samples low
+	burst_wait_samples low 1
 	burst_input high
 	wait_until 30 .1 burst_expected_count "$((burst_rounds + 1))" || fatal "capture did not recover after ${memburst_runtime} exit"
 	assert_burst_runtime go "$((burst_rounds + 1))"
