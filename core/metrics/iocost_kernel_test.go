@@ -679,7 +679,9 @@ func requireIOCostKernelInterval(t *testing.T, metrics []*metric.Data, disk stri
 
 func ioCostKernelBounds(elapsed time.Duration) (float64, float64) {
 	ms := float64(elapsed) / float64(time.Millisecond)
-	return max(1, ms-200), ms + 200
+	// Device IO and scheduling after wakeup can extend the measured wall time
+	// without extending IOCOST wait. Elapsed time supplies only an upper bound.
+	return 1, ms + 200
 }
 
 func TestIOCostKernelFunctional(t *testing.T) {
