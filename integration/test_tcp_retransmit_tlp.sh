@@ -24,8 +24,8 @@ bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-tlp
 TCPSHARK_BIN=${TOOL_BIN}
 BPF_OBJ=${TOOL_BPF}
 OUTPUT_DIR=${TOOL_WORK_DIR}
-TEST_PORT=19996
-TLP_REJECT_PORT=$((TEST_PORT + 1))
+TEST_PORT=$(allocate_available_port) || fatal "cannot allocate traffic port"
+TLP_REJECT_PORT=$(allocate_available_port) || fatal "cannot allocate rejected traffic port"
 PAYLOAD_SIZE=262144 # 256 KB
 S_ADDR="10.99.4.1"
 C_ADDR="10.99.4.2"

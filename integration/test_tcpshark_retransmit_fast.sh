@@ -25,7 +25,7 @@ bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-fast
 TCPSHARK_BIN=${TOOL_BIN}
 BPF_OBJ=${TOOL_BPF}
 OUTPUT_DIR=${TOOL_WORK_DIR}
-TEST_PORT=19998
+TEST_PORT=$(allocate_available_port) || fatal "cannot allocate traffic port"
 PAYLOAD_SIZE=2097152 # 2 MB
 
 S_ADDR="10.99.0.1"
@@ -67,7 +67,7 @@ ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}
 log_info "connbytes rule: drop reply packet #30 in client netns"
 
 # 3. Start tcpshark in retransmit mode in the root netns (sees all netns traffic via BPF).
-"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 15 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
+"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" --duration 15 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 sleep 1
 if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then

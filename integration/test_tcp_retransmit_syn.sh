@@ -24,8 +24,8 @@ bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-syn
 TCPSHARK_BIN=${TOOL_BIN}
 BPF_OBJ=${TOOL_BPF}
 OUTPUT_DIR=${TOOL_WORK_DIR}
-TEST_PORT=19991
-SYN_REJECT_PORT=$((TEST_PORT + 1))
+TEST_PORT=$(allocate_available_port) || fatal "cannot allocate traffic port"
+SYN_REJECT_PORT=$(allocate_available_port) || fatal "cannot allocate rejected traffic port"
 S_ADDR="10.99.2.1"
 C_ADDR="10.99.2.2"
 

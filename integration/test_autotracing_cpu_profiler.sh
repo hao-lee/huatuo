@@ -60,7 +60,7 @@ assert_cpu_profile_published() {
 	local task_id
 	task_id=$(jq -r '.tracer_id' "${CPU_PROFILER_EVENT}")
 	storage_curl --fail -H 'Content-Type: application/json' \
-		"${STORAGE_ADDR}/cpu-profiler-integration*/_search" \
+		"${STORAGE_ADDR}/$(storage_test_index cpu-profiler-integration)*/_search" \
 		-d "$(jq -nc --arg id "${task_id}" '{query:{bool:{filter:[
             {term:{"tracer_id.keyword":$id}}, {term:{"tracer_type.keyword":"profiling"}}
         ]}}}')" > "${CPU_PROFILER_RESULT}" || return 1
@@ -71,7 +71,7 @@ assert_cpu_profile_published() {
         .profile_data.profile.duration_nanos > 0)
     ' "${CPU_PROFILER_RESULT}" > /dev/null || return 1
 	storage_curl --fail -H 'Content-Type: application/json' \
-		"${STORAGE_ADDR}/cpu-profiler-integration*/_search" \
+		"${STORAGE_ADDR}/$(storage_test_index cpu-profiler-integration)*/_search" \
 		-d "$(jq -nc --arg id "profiling-publication:${task_id}" '{query:{ids:{values:[$id]}}}')" \
 		> "${CPU_PROFILER_PUBLICATION}" || return 1
 	jq -e '.hits.hits | length == 1' "${CPU_PROFILER_PUBLICATION}" > /dev/null

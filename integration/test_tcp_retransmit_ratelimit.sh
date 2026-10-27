@@ -27,7 +27,7 @@ OUTPUT_DIR=${TOOL_WORK_DIR}
 RATE=1
 DURATION=8
 EXPECTED_MAX=$((RATE * (DURATION + 1)))
-TEST_PORT=19997
+TEST_PORT=$(allocate_available_port) || fatal "cannot allocate traffic port"
 PAYLOAD_SIZE=2097152
 
 S_ADDR="10.99.1.1"
@@ -59,6 +59,7 @@ ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}
 	--connbytes-mode packets -j DROP
 
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
+	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" \
 	--max-events-per-second "${RATE}" \
 	--duration "${DURATION}" --output json \
 	> "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &

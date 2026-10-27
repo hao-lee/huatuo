@@ -30,7 +30,7 @@ source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 SERVER_IP="10.200.1.2"
 CLIENT_IP="10.200.1.1"
-TEST_PORT=19876
+TEST_PORT=$(allocate_available_port) || fatal "cannot allocate traffic port"
 
 _server_pid=""
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/net-rx-latency.XXXXXX")
@@ -54,17 +54,21 @@ compile_user_fixture \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \
 	"${SLOW_TCP_SERVER}"
 
-ip netns exec "${NETNS_SERVER}" "${SLOW_TCP_SERVER}" \
+ip netns exec "${NETNS_SERVER}" "${SLOW_TCP_SERVER}" "${NETNS_SERVER_ADDR}" "${TEST_PORT}" \
 	> "${WORK_DIR}/testserver.log" 2>&1 &
 server_pid=$!
 _server_pid="${server_pid}"
-sleep 0.5
+slow_server_is_ready() {
+	kill -0 "${_server_pid}" 2> /dev/null || fatal "slow TCP server exited before listening; see ${WORK_DIR}/testserver.log"
+	ip netns exec "${NETNS_SERVER}" ss -H -lnt "sport = :${TEST_PORT}" | grep -q .
+}
+wait_until 5 0.1 slow_server_is_ready || fatal "slow TCP server did not listen on ${NETNS_SERVER_ADDR}:${TEST_PORT}; see ${WORK_DIR}/testserver.log"
 
 for i in $(seq 1 5); do
 	log_info "curl request #${i} to ${NETNS_SERVER_ADDR}:${TEST_PORT}"
-	ip netns exec "${NETNS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
+	ip netns exec "${NETNS_CLIENT}" curl -fsS --noproxy '*' --connect-timeout 1 --max-time 2 \
 		http://${NETNS_SERVER_ADDR}:${TEST_PORT}/ \
-		>> "${WORK_DIR}/curl.log" 2>&1 || true
+		>> "${WORK_DIR}/curl.log" 2>&1 || fatal "request #${i} to the slow TCP server failed; see ${WORK_DIR}/curl.log"
 done
 
 EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"

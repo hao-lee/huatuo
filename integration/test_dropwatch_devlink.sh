@@ -30,8 +30,10 @@ if tracepoint_available devlink devlink_trap_report; then
 fi
 
 bpf_tool_setup dropwatch net_dropwatch
+DEVLINK_TEST_PORT=$(allocate_available_port udp) || fatal "cannot allocate devlink probe port"
 "${TOOL_BIN}" \
 	--bpf-path "${TOOL_BPF}" \
+	--filter "udp and port ${DEVLINK_TEST_PORT}" \
 	--duration 1 \
 	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}"

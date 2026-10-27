@@ -113,8 +113,7 @@ if [[ ${EUID} -ne 0 ]]; then
 	test_results_summary
 	exit 0
 fi
-runner_prerequisites=(unshare mount)
-if ((REQUESTED_JOBS > 1)); then runner_prerequisites+=(flock ss); fi
+runner_prerequisites=(unshare mount flock ss)
 if ! (require_commands "${runner_prerequisites[@]}"); then
 	test_skipped=$((${#test_scripts[@]} * REQUESTED_REPEAT_COUNT))
 	test_results_summary

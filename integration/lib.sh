@@ -149,13 +149,15 @@ assert_log_has_no_failure() {
 		|| fatal "${component} log contains an unexpected failure"
 }
 
+source "${BASH_SOURCE[0]%/*}/lib_resources.sh"
+
 allocate_available_port() {
 	local protocol=${1:-tcp} attempt port sockets
 	[[ ${protocol} == tcp || ${protocol} == udp ]] \
 		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
-		mkdir -p "${INTEGRATION_PORT_DIR}"
-		allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
+	if [[ -n ${INTEGRATION_RESOURCE_DIR:-} ]]; then
+		mkdir -p "${INTEGRATION_RESOURCE_DIR}"
+		allocate_test_port "${protocol}" 9> "${INTEGRATION_RESOURCE_DIR}/allocation.lock"
 		return
 	fi
 	sockets=$(ss -H -an "--${protocol}") || return 1
@@ -166,24 +168,6 @@ allocate_available_port() {
 			return 0
 		fi
 	done
-	return 1
-}
-
-# The counter reserves ports across command substitutions and test subprocesses.
-allocate_worker_port() {
-	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets
-	flock 9
-	sockets=$(ss -H -an "--${protocol}") || return 1
-	if [[ -f ${INTEGRATION_PORT_DIR}/next ]]; then read -r port < "${INTEGRATION_PORT_DIR}/next"; fi
-	while ((port < INTEGRATION_PORT_BASE + 1000)); do
-		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next"
-		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
-			echo "${port}"
-			return 0
-		fi
-		port=$((port + 1))
-	done
-	log_error "worker port range is exhausted: ${INTEGRATION_PORT_BASE}"
 	return 1
 }
 
@@ -653,7 +637,7 @@ integration_huatuo_bamai_start() {
 	fi
 
 	"$config_writer"
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+	if [[ -n ${INTEGRATION_RESOURCE_DIR:-} ]]; then
 		configure_worker_bamai_address
 	fi
 	huatuo_bamai_start "${runtime_args[@]}"

@@ -23,7 +23,8 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 readonly KERNEL_BTF="/sys/kernel/btf/vmlinux"
 readonly TARGET_IP="127.0.0.99"
-readonly TARGET_PORT=9998
+TARGET_PORT=$(allocate_available_port udp) || fatal "cannot allocate drop-reason traffic port"
+readonly TARGET_PORT
 
 DROPWATCH_PID=""
 TRAFFIC_PID=""

@@ -1,6 +1,8 @@
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -12,11 +14,21 @@
 #define SOF_TIMESTAMPING_RX_SOFTWARE (1 << 2)
 #endif
 
-#define BIND_IP	  "10.200.1.2"
-#define BIND_PORT 19876
-
-int main(void)
+int main(int argc, char **argv)
 {
+	char *end;
+	long port;
+
+	if (argc != 3) {
+		fprintf(stderr, "usage: %s ADDRESS PORT\n", argv[0]);
+		return 1;
+	}
+	errno = 0;
+	port = strtol(argv[2], &end, 10);
+	if (errno || *end || port < 1 || port > 65535) {
+		fprintf(stderr, "invalid port: %s\n", argv[2]);
+		return 1;
+	}
 
 	int tsfd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (tsfd >= 0) {
@@ -36,10 +48,10 @@ int main(void)
 
 	struct sockaddr_in addr = {
 		.sin_family = AF_INET,
-		.sin_port = htons(BIND_PORT),
+		.sin_port = htons((uint16_t)port),
 	};
-	if (inet_pton(AF_INET, BIND_IP, &addr.sin_addr) != 1) {
-		fprintf(stderr, "invalid address: %s\n", BIND_IP);
+	if (inet_pton(AF_INET, argv[1], &addr.sin_addr) != 1) {
+		fprintf(stderr, "invalid address: %s\n", argv[1]);
 		return 1;
 	}
 	if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {

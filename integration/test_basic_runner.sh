@@ -55,7 +55,7 @@ RUNNER_PARENT_MOUNT=$(readlink /proc/self/ns/mnt)
 export RUNNER_PARENT_UTS RUNNER_PARENT_MOUNT
 
 mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
-cp "${ROOT_DIR}/integration/"{run.sh,lib.sh,lib_runner.sh,exec_case.sh} "${RUNNER_FIXTURE}/integration/"
+cp "${ROOT_DIR}/integration/"{run.sh,lib.sh,lib_resources.sh,lib_runner.sh,exec_case.sh} "${RUNNER_FIXTURE}/integration/"
 cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
 cat > "${RUNNER_FIXTURE}/integration/env.sh" << 'EOF'
 export ROOT_DIR=$PWD
@@ -100,6 +100,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 require_commands bash "${ROOT_DIR}/integration/run.sh"
 require_build_output
+if read -r unexpected_input; then fatal "batch case inherited runner input"; fi
 [[ $(hostname) == huatuo-dev ]] || fatal "runner hostname was not isolated"
 [[ $(readlink /proc/self/ns/uts) != "${RUNNER_PARENT_UTS}" ]] || fatal "runner reused the parent UTS namespace"
 [[ $(readlink /proc/self/ns/mnt) != "${RUNNER_PARENT_MOUNT}" ]] || fatal "runner reused the parent mount namespace"
@@ -120,6 +121,8 @@ require_commands huatuo-runner-missing-command
 EOF
 	runner_check "${runner_suite}" mixed 0 'total=2 passed=1 skipped=1 failed=0'
 	[[ -f "${RUNNER_FIXTURE}/skip-cleaned" ]] || fatal "${runner_suite}: skip bypassed EXIT cleanup"
+	printf 'caller input\n' > "${RUNNER_FIXTURE}/input"
+	runner_check "${runner_suite}" stdin 0 'total=1 passed=1 skipped=0 failed=0' test_pass.sh < "${RUNNER_FIXTURE}/input"
 	runner_check "${runner_suite}" repeated_pass 0 'total=2 passed=2 skipped=0 failed=0' test_pass.sh 2
 	runner_check "${runner_suite}" repeated_skip 0 'total=2 passed=0 skipped=2 failed=0' test_skip.sh 2
 	RUNNER_STOP_FAIL=1 runner_check "${runner_suite}" cleanup_failure 1 'total=1 passed=0 skipped=0 failed=1' test_skip.sh
@@ -182,6 +185,7 @@ cat > "${RUNNER_FIXTURE}/integration/test_metrics.sh" << 'EOF'
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 name=${0##*/}
+if read -r unexpected_input; then fatal "parallel case inherited runner input"; fi
 exec 8>/var/run/huatuo-bamai.pid
 exec 9>/var/run/huatuo-apiserver.pid
 flock -n 8 || fatal "bamai PID lock was shared between workers"
@@ -205,7 +209,7 @@ for file in huatuo-bamai.pid huatuo-apiserver.pid huatuo-toolstream.sock; do
 done
 EOF
 cp "${RUNNER_FIXTURE}/integration/"test_{metrics,node_config_api}.sh
-runner_check integration parallel_isolation 0 'total=2 passed=2 skipped=0 failed=0' -j 2
+runner_check integration parallel_isolation 0 'total=2 passed=2 skipped=0 failed=0' -j 2 < "${RUNNER_FIXTURE}/input"
 [[ $(cat "${RUNNER_FIXTURE}/"*.address | sort -u | wc -l) == 2 ]] || fatal "parallel workers shared a daemon port"
 
 # Keep the earlier minimal fixtures independent of storage helpers.

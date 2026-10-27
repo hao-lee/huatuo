@@ -117,8 +117,10 @@ storage_start_locked() {
 
 	# Keep failed containers available for diagnostics until explicit cleanup.
 	started=${SECONDS}
+	local published_port
+	published_port=$(allocate_available_port) || fatal "cannot allocate storage HTTP port"
 	STORAGE_CONTAINER_ID=$(docker run --detach \
-		--publish 127.0.0.1::9200 \
+		--publish "127.0.0.1:${published_port}:9200" \
 		"${environment[@]}" "${mounts[@]}" \
 		"${image}" \
 		2> "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-run.log") || {

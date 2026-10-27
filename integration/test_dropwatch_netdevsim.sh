@@ -91,6 +91,7 @@ IFS=$'\t' read -r TRAP_NAME TRAP_GROUP <<< "${trap_fields}"
 
 "${TOOL_BIN}" \
 	--bpf-path "${TOOL_BPF}" \
+	--device "${NETDEV}" \
 	--duration "${DROPWATCH_DURATION}" \
 	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &

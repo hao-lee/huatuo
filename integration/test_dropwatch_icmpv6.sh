@@ -65,8 +65,9 @@ run_case() {
 	ip netns exec "${NETNS}" ip6tables -I INPUT 1 "${rule[@]}" \
 		|| skip "IPv6 ICMP netfilter rules are unavailable"
 
-	# Select the isolated test flow in the output to exercise the decoder/writer path.
+	# Filter the test flow before rate limiting so other cases cannot consume its budget.
 	"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" --duration "${ICMPV6_TIMEOUT_SECONDS}" --output "${output}" \
+		--filter "ip6 and src host ${source} and dst host ${destination}" \
 		> "${out}" 2> "${err}" &
 	icmpv6_dropwatch_pid=$!
 	# Keep traffic active until the complete expected packet is published.

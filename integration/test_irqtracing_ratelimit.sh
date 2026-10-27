@@ -27,7 +27,8 @@ readonly TOOL_BIN="${ROOT_DIR}/_output/bin/irqtracing"
 readonly TOOL_BPF="${ROOT_DIR}/_output/bpf/irqtracing.o"
 readonly OUT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/irqtracing"
 readonly TARGET_IP="127.0.0.99"
-readonly TARGET_PORT=9999
+TARGET_PORT=$(allocate_available_port udp) || fatal "cannot allocate IRQ traffic port"
+readonly TARGET_PORT
 readonly DURATION=3
 readonly MAX_EVENTS_PER_SECOND_PER_CPU=2
 readonly FLOOD_READY="${OUT_DIR}/flood.ready"

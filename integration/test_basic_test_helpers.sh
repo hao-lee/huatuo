@@ -313,6 +313,7 @@ cat > "${HUATUO_BAMAI_TEST_TMPDIR}/storage-fixture.sh" << 'SH'
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
 source "$ROOT_DIR/integration/lib_storage.sh"
+export INTEGRATION_RESOURCE_DIR="$HUATUO_BAMAI_TEST_TMPDIR/resources"
 if [[ $TEST_MODE != private ]]; then export STORAGE_SHARED_DIR="$HUATUO_BAMAI_TEST_TMPDIR/shared"; fi
 docker() {
  case $1 in
@@ -389,6 +390,11 @@ for storage_mode in shared concurrent private bound_data failure skip compatibil
 	assert_eq "${storage_status}" "${storage_expected_status}" "${storage_mode}: storage status; see ${storage_work}/test.log"
 	assert_eq "$(grep -c '^start$' "${storage_work}/lifecycle.log")" "${storage_expected_starts}" "${storage_mode}: starts"
 	assert_eq "$(grep -c '^stop$' "${storage_work}/lifecycle.log")" "${storage_expected_starts}" "${storage_mode}: stops"
+	published_ports=$(awk 'previous == "--publish" { print } { previous = $0 }' "${storage_work}/lifecycle.log.args")
+	if grep -qEv '^127\.0\.0\.1:[0-9]+:9200$' <<< "${published_ports}"; then
+		fatal "${storage_mode}: storage bypassed explicit port allocation: ${published_ports}"
+	fi
+	assert_eq "$(sort -u <<< "${published_ports}" | wc -l)" "${storage_expected_starts}" "${storage_mode}: unique storage ports"
 	case ${storage_mode} in
 	failure | stop_failure) [[ -f ${storage_work}/shared/es.env ]] || fatal "${storage_mode}: diagnostics were removed" ;;
 	*) [[ ! -e ${storage_work}/shared/es.env ]] || fatal "${storage_mode}: shared storage state survived cleanup" ;;
@@ -440,10 +446,10 @@ log_info "shared and private storage lifecycles, isolation and failure cleanup p
 log_info "profiling node and apiserver storage configs agree and isolate workspaces"
 
 (
-	work="${HUATUO_BAMAI_TEST_TMPDIR}/worker-ports"
+	work="${HUATUO_BAMAI_TEST_TMPDIR}/resource-ports"
 	mkdir -p "${work}"
 	ss() { echo 'LISTEN 0 128 127.0.0.1:20000 0.0.0.0:*'; }
-	export INTEGRATION_PORT_BASE=20000 INTEGRATION_PORT_DIR="${work}/ports"
+	export INTEGRATION_RESOURCE_DIR="${work}/resources"
 	pids=()
 	for ((i = 0; i < 12; i++)); do
 		allocate_available_port > "${work}/port-${i}" &
@@ -453,12 +459,42 @@ log_info "profiling node and apiserver storage configs agree and isolate workspa
 	assert_eq "$(sort -u "${work}/"port-* | wc -l)" 12 "concurrent port uniqueness"
 	for file in "${work}/"port-*; do
 		port=$(cat "${file}")
-		((port > 20000 && port < 21000)) || fatal "worker port outside its block: ${port}"
+		((port > 20000 && port <= 60999)) || fatal "allocated port outside its pool: ${port}"
 	done
-	assert_eq "$(INTEGRATION_PORT_BASE=21000 INTEGRATION_PORT_DIR="${work}/other" allocate_available_port)" 21000 "separate worker block"
+	# Command substitutions and different protocols share one allocation ledger.
+	assert_eq "$(allocate_available_port udp)" 20013 "UDP allocation avoids prior TCP claims"
+	read -r first_ephemeral last_ephemeral < /proc/sys/net/ipv4/ip_local_port_range
+	printf '%s\n' "${first_ephemeral}" > "${INTEGRATION_RESOURCE_DIR}/next-port"
+	if ((last_ephemeral < 60999)); then
+		assert_eq "$(allocate_available_port)" "$((last_ephemeral + 1))" "skip ephemeral ports"
+	else
+		if allocate_available_port; then fatal "ephemeral ports were allocated"; fi
+	fi
 	ss() { return 1; }
 	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
 )
+
+# Partial acquisition rolls back, capacities are enforced, and machine-exclusive
+# cases exclude every ordinary resource, including otherwise unrelated ones.
+(
+	source "${ROOT_DIR}/integration/lib_runner.sh"
+	export INTEGRATION_RESOURCE_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/resource-leases"
+	mkdir -p "${INTEGRATION_RESOURCE_DIR}"
+	declare -a runner_resource_fds=()
+	runner_try_resources 0 java-agent || fatal "first named lease failed"
+	if runner_try_resources 1 'profiler java-agent'; then fatal "named resource overlapped"; fi
+	runner_try_resources 2 profiler || fatal "partial lease was not released"
+	runner_try_resources 3 profiler || fatal "second capacity slot was not available"
+	if runner_try_resources 4 profiler; then fatal "resource capacity was exceeded"; fi
+	if runner_try_resources 4 exclusive; then fatal "exclusive case overlapped active leases"; fi
+	for slot in 0 2 3; do runner_release_resources "${slot}"; done
+	runner_try_resources 4 exclusive || fatal "released leases still block exclusivity"
+	if runner_try_resources 5 netdevsim; then fatal "ordinary case bypassed exclusive lease"; fi
+	runner_release_resources 4
+	# Reacquiring the machine lock also detects leaked descriptors from rollback.
+	flock -n "${INTEGRATION_RESOURCE_DIR}/machine.lock" true || fatal "machine lease leaked"
+)
+log_info "resource capacities, partial rollback, exclusion and release passed"
 
 for config_mode in auth_only empty_server explicit_address; do
 	config_work="${HUATUO_BAMAI_TEST_TMPDIR}/worker-config-${config_mode}"
@@ -559,6 +595,21 @@ wait_for() {
  for ((i=0;i<300;i++)); do [[ -f $1 ]] && return 0; sleep 0.01; done
  echo "timed out: $1" >&2; return 1
 }
+if [[ $TEST_MODE == lease_release ]]; then
+ case $name in
+  test_profiler_java_cpu_multi_pid.sh)
+   touch "$TEST_STATE/first-started"
+   wait_for "$TEST_STATE/second-started";;
+  test_metrics.sh)
+   touch "$TEST_STATE/second-started"
+   wait_for "$TEST_STATE/third-done";;
+  test_profiler_java_memory_usage_alloc.sh)
+   touch "$TEST_STATE/third-done";;
+  test_unknown.sh) touch "$TEST_STATE/exclusive-done";;
+ esac
+ record_test_timing fixture verification "$SECONDS"
+ exit 0
+fi
 if [[ $TEST_MODE == profiler ]]; then
  if [[ $name == test_profiler_* && $name != test_profiler_native_cpu_hardware_pmu.sh ]]; then
   exec 8> "$TEST_STATE/profiler-slot-1"
@@ -566,14 +617,16 @@ if [[ $TEST_MODE == profiler ]]; then
   flock -n 8 || flock -n 9 || fatal "more than two profiler fixtures overlap"
  fi
  case $name in
-  test_metrics.sh) touch "$TEST_STATE/pool-done";;
+  test_metrics.sh)
+   touch "$TEST_STATE/pool-started"
+   wait_for "$TEST_STATE/first-started"
+   touch "$TEST_STATE/pool-done";;
   test_profiler_java_cpu_multi_pid.sh)
-   [[ -f $TEST_STATE/pool-done ]]
    touch "$TEST_STATE/first-started"
+   wait_for "$TEST_STATE/pool-started"
    wait_for "$TEST_STATE/second-started"
    touch "$TEST_STATE/first-done";;
   test_profiler_native_cpu.sh)
-   [[ -f $TEST_STATE/pool-done ]]
    touch "$TEST_STATE/second-started"
    wait_for "$TEST_STATE/first-started"
    touch "$TEST_STATE/second-done";;
@@ -626,7 +679,7 @@ case $name in
   wait_for "$TEST_STATE/third-started"
   touch "$TEST_STATE/fourth-done"
   ;;
- test_unknown.sh)
+ test_unknown.sh|test_iotracing_xfs.sh)
   [[ -f $TEST_STATE/first-done && -f $TEST_STATE/second-done && -f $TEST_STATE/third-done ]]
   if [[ $TEST_MODE == storage ]]; then [[ -f $TEST_STATE/fourth-done ]]; fi
   touch "$TEST_STATE/exclusive-done"
@@ -637,6 +690,12 @@ cat > "${runner_work}/launch.sh" << 'SH'
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
 source "$ROOT_DIR/integration/lib_runner.sh"
+if [[ $TEST_MODE == resource ]]; then
+ runner_test_resources[test_dropwatch_devlink.sh]=fixture-device
+ runner_test_resources[test_dropwatch_reason.sh]=fixture-device
+elif [[ $TEST_MODE == storage ]]; then
+ runner_test_resources[test_dropwatch_icmpv6.sh]=private-storage
+fi
 if [[ $TEST_MODE == failure ]]; then
  huatuo_bamai_stop() {
   if [[ $1 == */test_metrics.* ]]; then touch "$TEST_STATE/first-cleaned"; fi
@@ -644,7 +703,7 @@ if [[ $TEST_MODE == failure ]]; then
 elif [[ $TEST_MODE == cleanup_failure ]]; then huatuo_bamai_stop() { return 1; }; fi
 run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 SH
-for runner_mode in refill resource storage profiler failure skip serial repeated cleanup_failure; do
+for runner_mode in refill resource storage profiler lease_release xfs failure skip serial repeated cleanup_failure; do
 	runner_state="${runner_work}/${runner_mode}"
 	mkdir -p "${runner_state}/workspace"
 	runner_names=(test_metrics.sh test_node_config_api.sh test_metrics_include_filter.sh test_unknown.sh)
@@ -656,9 +715,11 @@ for runner_mode in refill resource storage profiler failure skip serial repeated
 		runner_names=(test_basic_storage_opensearch_elasticsearch.sh test_dropwatch_icmpv6.sh test_metrics_include_filter.sh test_node_cloud_events_api.sh test_unknown.sh)
 		;;
 	profiler)
-		runner_jobs=3
+		runner_jobs=4
 		runner_names=(test_metrics.sh test_profiler_java_cpu_multi_pid.sh test_profiler_java_memory_usage_alloc.sh test_profiler_native_cpu.sh test_profiler_native_cpu_cpp_symbols.sh test_profiler_native_cpu_hardware_pmu.sh)
 		;;
+	lease_release) runner_names=(test_profiler_java_cpu_multi_pid.sh test_metrics.sh test_profiler_java_memory_usage_alloc.sh test_unknown.sh) ;;
+	xfs) runner_names=(test_metrics.sh test_node_config_api.sh test_metrics_include_filter.sh test_iotracing_xfs.sh) ;;
 	serial) runner_jobs=1 ;;
 	repeated) runner_repeats=2 ;;
 	failure | cleanup_failure) runner_expected_status=1 ;;

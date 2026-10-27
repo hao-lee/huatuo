@@ -219,7 +219,7 @@ write_cpusys_profiler_config() {
     Address = "${STORAGE_ADDR}"
     Username = "integration"
     Password = "integration"
-    Index = "cpu-profiler-integration"
+    Index = "$(storage_test_index cpu-profiler-integration)"
 EOF
 }
 

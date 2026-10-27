@@ -44,26 +44,52 @@ make integration
 
 ### Parallel Integration Tests
 
-Local runs default to one worker; use `bash integration/run.sh -j 2` or
-`INTEGRATION_JOBS=2 make integration` to enable parallel execution. VM CI uses
-three workers. Reviewed tests run in a bounded pool; network cases share a resource
-group, including storage compatibility because it generates network events.
-CPU-sensitive and unreviewed cases run alone after the pool drains.
-A separate profiler batch runs after shared Elasticsearch stops, with at most
-two concurrent cases. Java cases serialize because they share an agent library.
-CPU-pinned, benchmark, hardware PMU and dropwatch resource-budget cases remain
-exclusive.
-E2E stays serial even when `INTEGRATION_JOBS` is set.
+Local runs default to one worker; use `bash integration/run.sh -j 4` or
+`INTEGRATION_JOBS=4 make integration` to enable parallel execution. VM CI uses
+four workers. One scheduler runs reviewed cases as soon as their declared
+resources are available. Profilers, network tests and ordinary cases can overlap;
+there are no separate execution phases. E2E stays serial.
 
-Each parallel case has private Huatuo PID files and toolstream sockets and a
-worker-specific port range. Host container runtime access is preserved. Run one
-suite runner per host. Shared Elasticsearch remains alive until the batch drains.
+Resource declarations live in `integration/lib_runner.sh`. An empty declaration
+means the case needs no shared resource. Named resources are exclusive by default;
+`profiler` permits two simultaneous profiling cases and `private-storage` permits
+one private storage case beside the runner-owned shared Elasticsearch instance.
+`java-agent`, `cpu-pinned`, `netdevsim`, `bonding`, `io-devices` and `build` serialize
+only their users. A case can request several resources. The scheduler acquires all
+leases without waiting and releases partial acquisitions if any resource is busy,
+so a blocked case consumes no worker slot. Leases remain held through cleanup.
+
+Tests measuring whole-machine CPU/heap budgets, runtime cgroup ownership,
+Memburst cooldowns and unreviewed kernel qualification run with the `exclusive`
+machine lease. XFS qualification also runs alone: its loop devices appear in
+global sysfs and can affect sibling daemons' XFS collectors despite private
+mount namespaces. Unreviewed tests also default to `exclusive`. The scheduler waits
+until every other case finishes before starting one, and stops shared storage
+before its measurements. To add a parallel case, review its input filters,
+namespace/device ownership, global settings and cleanup, then declare its actual
+resources in the table. A unique port alone does not isolate host-wide BPF data.
+
+`integration/lib_resources.sh` stores allocation state and `flock` leases in the
+runner's `resources/` directory. Cases request ports through
+`allocate_available_port`; the shared ledger covers daemon listeners, traffic
+ports and explicit Docker-published storage ports. It persists across subprocesses,
+command substitutions and repeat rounds. Allocated ports skip the kernel's
+ephemeral range and are not reused during the invocation. This coordinates suite
+participants; unrelated programs can still bind a queued port and cause startup
+to fail. Use one suite runner per host.
+
+Elasticsearch callers use `storage_test_index prefix` for an index derived from
+their unique workspace. Writer configurations and queries must use the same
+helper. Each parallel case also has private Huatuo PID files and toolstream
+sockets, while retaining host container runtime access. Shared Elasticsearch stays
+alive until its consumers finish; the runner owns shutdown and failure artifacts.
+
 On failure, scheduling stops and active cases finish their cleanup. Per-case
 `test.log` files are printed on failure, and results include elapsed durations.
 INT or TERM cancels each active case's process group with TERM, allowing five
 seconds for EXIT cleanup before KILL. The runner preserves exit status 130 or 143.
-New tests default to serial execution; review shared state before adding them
-to `integration/lib_runner.sh`.
+Lock descriptors are closed in child cases so siblings cannot retain each other's
+leases. Successful runs remove resource state; failed runs preserve diagnostics.
 
 ## Prerequisites and Results
 
@@ -256,8 +282,9 @@ Java streaming completion, shutdown failures, missing windows and complete
 network capture predicates using local process and packet fixtures. Shell owns
 the orchestration and assertions; Python supplies only process workloads. Capture
 predicates live in `lib_network_capture.sh`, shared with the live tests. The helper
-test also checks build/cache contracts, storage ownership, scheduling and bounded
-serial/parallel cancellation. It requires Python 3 and jq, without a JVM or BPF attachment.
+test also checks build/cache contracts, storage ownership, concurrent port
+allocation, resource capacities and rollback, profiler overlap, descriptor release,
+and bounded serial/parallel cancellation. It requires Python 3 and jq, without a JVM or BPF attachment.
 
 ## IO tests
 
