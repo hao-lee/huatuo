@@ -137,6 +137,9 @@ integration 和 E2E，仍执行编译。默认执行单元测试，PR 和主分�
 
 ### 连接虚拟机
 
+测试后保留虚拟机时，也可在 `vm-debug-<distro>-<arch>` artifact 中获取
+连接 runner 的 SSH 命令。连接仍需使用启动 workflow 的用户注册的 SSH 密钥。
+
 打开 job 中的 `Debug VM: Retain ...` step，并按日志提示操作：
 
 1. 在本地终端运行日志中的完整 SSH 命令，连接 GitHub runner。

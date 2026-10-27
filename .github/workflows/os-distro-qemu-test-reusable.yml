@@ -210,6 +210,22 @@ jobs:
           limit-access-to-actor: true
           wait-timeout-minutes: 1
 
+      - name: Save VM debug connection
+        if: always() && steps.upterm-after.outcome == 'success'
+        env:
+          UPTERM_SSH_COMMAND: ${{ steps.upterm-after.outputs.ssh-command }}
+        run: printf '%s\n' "$UPTERM_SSH_COMMAND" > "$RUNNER_TEMP/huatuo-vm-debug-ssh.txt"
+
+      - name: Upload VM debug connection
+        if: always() && steps.upterm-after.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-debug-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/huatuo-vm-debug-ssh.txt
+          retention-days: 1
+          overwrite: true
+
       - name: 'Debug VM: Retain after test'
         if: always() && steps.upterm-after.outcome == 'success'
         timeout-minutes: 330

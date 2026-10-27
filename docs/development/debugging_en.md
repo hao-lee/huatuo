@@ -121,6 +121,10 @@ by default and always run for PR and main-branch CI.
 
 ### Connect to the VM
 
+For an after-test session, the runner SSH command is also available in the
+`vm-debug-<distro>-<arch>` artifact while the job is retained. Access still
+requires an SSH key registered to the user who started the workflow.
+
 Open the job's `Debug VM: Retain ...` step and follow the log instructions:
 
 1. Run the complete SSH command from the log in a local terminal to connect to the GitHub runner.
