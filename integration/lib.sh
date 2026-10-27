@@ -447,8 +447,7 @@ huatuo_bamai_ready() {
 	[[ -n "$pid" ]] || return 1
 
 	if ! kill -0 "${pid}" 2> /dev/null; then
-		log_error "huatuo-bamai pid=${pid} exited"
-		return 1
+		fatal "huatuo-bamai pid=${pid} exited before readiness; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	fi
 
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null
@@ -535,8 +534,7 @@ huatuo_apiserver_ready() {
 	[[ -n "$pid" ]] || return 1
 
 	if ! kill -0 "${pid}" 2> /dev/null; then
-		log_error "huatuo-apiserver pid=${pid} exited"
-		return 1
+		fatal "huatuo-apiserver pid=${pid} exited before readiness; see ${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log"
 	fi
 
 	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/readyz" > /dev/null

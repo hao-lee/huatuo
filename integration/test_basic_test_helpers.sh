@@ -18,6 +18,36 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 require_commands python3 jq
 
+# Exited daemons cannot become ready; live listeners may still be starting.
+(
+	curl() { return "${readiness_curl_status}"; }
+	sleep 0 &
+	readiness_dead_pid=$!
+	wait "${readiness_dead_pid}"
+	CURL_TIMEOUT=() APISERVER_ADDR=http://unused HUATUO_BAMAI_METRICS_API=http://unused
+	for readiness_daemon in bamai apiserver; do
+		readiness_pid_file="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-${readiness_daemon}.pid"
+		readiness_log="${HUATUO_BAMAI_TEST_TMPDIR}/${readiness_daemon}-readiness.log"
+		printf '%s\n' "${readiness_dead_pid}" > "${readiness_pid_file}"
+		if (wait_until 10 0.1 "huatuo_${readiness_daemon}_ready") > "${readiness_log}" 2>&1; then
+			fatal "${readiness_daemon}: exited daemon accepted as ready"
+		fi
+		grep -Fq 'exited before readiness; see ' "${readiness_log}" \
+			|| fatal "${readiness_daemon}: missing startup failure diagnostic"
+		if grep -Fq 'wait_until timeout' "${readiness_log}"; then
+			fatal "${readiness_daemon}: waited for an exited daemon"
+		fi
+		printf '%s\n' "${BASHPID}" > "${readiness_pid_file}"
+		readiness_curl_status=1
+		if "huatuo_${readiness_daemon}_ready"; then
+			fatal "${readiness_daemon}: unready listener accepted"
+		fi
+		readiness_curl_status=0
+		"huatuo_${readiness_daemon}_ready"
+		rm -f "${readiness_pid_file}"
+	done
+)
+
 assert_process_shutdown() (
 	local mode=$1 expected_status=$2 signal=${3:-TERM} pid="" status=0
 	local ready="${HUATUO_BAMAI_TEST_TMPDIR}/${mode}.ready"
