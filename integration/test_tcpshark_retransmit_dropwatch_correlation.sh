@@ -22,6 +22,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 bpf_tool_setup tcpshark tcp_retransmit tcp-retrans-dropwatch-correlation
 
@@ -67,11 +68,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-tcpshark_running() {
-	[[ -n "${corr_tcpshark_pid}" ]] \
-		&& kill -0 "${corr_tcpshark_pid}" 2> /dev/null
-}
-
 correlated_event_ready() {
 	[[ -s "${CORR_OUTPUT}" ]] || return 1
 	jq -s -c -e \
@@ -110,13 +106,13 @@ corr_netem_active=true
 	--device-excluded lo \
 	--bpf-path-dir "${CORR_BPF_DIR}" \
 	--filter "tcp and port ${CORR_PORT}" \
-	--duration 20 \
+	--duration 50 \
 	--output json \
 	> "${CORR_OUTPUT}" 2> "${CORR_ERROR}" &
 corr_tcpshark_pid=$!
 
-sleep 1
-tcpshark_running || fatal "tcpshark exited before the workload started"
+wait_until 30 0.1 tcpshark_capture_is_ready "${corr_tcpshark_pid}" "${CORR_ERROR}" \
+	|| fatal "tcpshark capture did not become ready"
 
 ip netns exec "${NETNS_SERVER}" timeout 15 python3 \
 	"${ROOT_DIR}/integration/testdata/tcp_server.py" \

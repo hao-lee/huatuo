@@ -46,6 +46,12 @@ start_sched_tick_test() {
 		--procfs-prefix "${SCHED_TICK_FIXTURE_ROOT}" \
 		--disable-kubelet \
 		--log-debug
+
+	# The interval hook attaches last, after both NO_HZ state hooks.
+	wait_until 30 0.1 \
+		grep -qE 'attached BPF program.*symbol="?account_process_tick"?([[:space:]]|$)' \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
+		|| fatal "sched_tick BPF probes did not attach"
 }
 
 require_commands awk jq taskset

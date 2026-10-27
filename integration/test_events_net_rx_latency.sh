@@ -47,7 +47,8 @@ integration_huatuo_bamai_start \
 	write_net_rx_latency_config \
 	--region dev \
 	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
-	--disable-kubelet
+	--disable-kubelet \
+	--log-debug
 
 SLOW_TCP_SERVER="${WORK_DIR}/slow-tcp-server"
 compile_user_fixture \
@@ -63,6 +64,12 @@ slow_server_is_ready() {
 	ip netns exec "${NETNS_SERVER}" ss -H -lnt "sport = :${TEST_PORT}" | grep -q .
 }
 wait_until 5 0.1 slow_server_is_ready || fatal "slow TCP server did not listen on ${NETNS_SERVER_ADDR}:${TEST_PORT}; see ${WORK_DIR}/testserver.log"
+
+# HTTP readiness precedes asynchronous probe attachment.
+wait_until 30 0.1 \
+	grep -qE 'attached BPF and created event pipe.*map_name="?net_recv_lat_event_map"?([[:space:]]|$)' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
+	|| fatal "net_rx_latency BPF event pipe was not attached"
 
 for i in $(seq 1 5); do
 	log_info "curl request #${i} to ${NETNS_SERVER_ADDR}:${TEST_PORT}"

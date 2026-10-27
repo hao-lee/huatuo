@@ -98,6 +98,8 @@ request() {
 	RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/request-${REQUEST_NO}.json"
 	local args=() status curl_status=0 error_file="${RESPONSE%.json}.curl-error"
 	[[ -z "$body" ]] || args=(-H 'Content-Type: application/json' --data-binary "$body")
+	# Raw profiles require an Elasticsearch query and can be large under VM load.
+	[[ $path != */raw* ]] || args+=(--max-time 30)
 	printf '%s %s\n%s\n' "$method" "$path" "$body" > "${RESPONSE%.json}.request"
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -X "$method" -H "Authorization: Bearer ${API_TOKEN}" \
 		"${args[@]}" -o "$RESPONSE" -w '%{http_code}' "${APISERVER_ADDR}${path}" 2> "$error_file") || curl_status=$?

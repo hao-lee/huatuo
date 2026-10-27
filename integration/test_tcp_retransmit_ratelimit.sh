@@ -19,6 +19,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-ratelimit
 TCPSHARK_BIN=${TOOL_BIN}
@@ -26,7 +27,6 @@ BPF_OBJ=${TOOL_BPF}
 OUTPUT_DIR=${TOOL_WORK_DIR}
 RATE=1
 DURATION=8
-EXPECTED_MAX=$((RATE * (DURATION + 1)))
 TEST_PORT=$(allocate_available_port) || fatal "cannot allocate traffic port"
 PAYLOAD_SIZE=2097152
 
@@ -46,7 +46,6 @@ cleanup() {
 	sleep 0.2
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	namespace_cleanup
-	rm -rf "${OUTPUT_DIR}"
 }
 trap cleanup EXIT
 
@@ -61,10 +60,12 @@ ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" \
 	--max-events-per-second "${RATE}" \
-	--duration "${DURATION}" --output json \
+	--duration "$((DURATION + 30))" --output json \
 	> "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
-sleep 1
+wait_until 30 0.1 tcpshark_capture_is_ready "${TCPSHARK_PID}" "${OUTPUT_DIR}/stderr.log" \
+	|| fatal "tcpshark capture did not become ready"
+capture_started=${SECONDS}
 
 ip netns exec "${NETNS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
 	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" \
@@ -76,10 +77,12 @@ ip netns exec "${NETNS_CLIENT}" timeout 8 bash -c \
 	"exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
 CLI_PID=$!
 
-sleep 6
+sleep "${DURATION}"
 
-wait "${TCPSHARK_PID}" || true
+stop_and_wait_by_pid "${TCPSHARK_PID}" || fatal "tcpshark failed; see ${OUTPUT_DIR}/stderr.log"
 TCPSHARK_PID=""
+# Include boundary slack and scheduling delays in the actual capture window.
+EXPECTED_MAX=$((RATE * (SECONDS - capture_started + 1)))
 
 events=$(grep -c '"event_type":"tcp_retransmit_' "${OUTPUT_DIR}/events.json" 2> /dev/null || true)
 events=${events:-0}

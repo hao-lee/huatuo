@@ -14,9 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Completion predicates shared by live captures and local regression fixtures.
+# Readiness and completion predicates shared by live captures and local fixtures.
 # Polling must tolerate incomplete captures while events are still arriving.
 # Final assertions reuse the predicates after shutdown and report failures.
+
+tcpshark_capture_is_ready() {
+	local pid=$1 error_file=$2
+	kill -0 "${pid}" 2> /dev/null \
+		|| fatal "tcpshark pid=${pid} exited before capture readiness; see ${error_file}"
+	[[ -f "${error_file}" ]] && grep -Fq 'tcpshark: capture ready' "${error_file}"
+}
 
 ipv4_options_packet_matches() {
 	local protocol=$1 ihl=$2 length=$3

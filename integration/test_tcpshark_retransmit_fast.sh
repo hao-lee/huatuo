@@ -67,15 +67,10 @@ ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}
 log_info "connbytes rule: drop reply packet #30 in client netns"
 
 # 3. Start tcpshark in retransmit mode in the root netns (sees all netns traffic via BPF).
-"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" --duration 15 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
+"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" --duration 45 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
-sleep 1
-if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
-	TCPSHARK_STATUS=0
-	wait "${TCPSHARK_PID}" || TCPSHARK_STATUS=$?
-	TCPSHARK_PID=""
-	fatal "tcpshark exited before workload start (status=${TCPSHARK_STATUS})"
-fi
+wait_until 30 0.1 tcpshark_capture_is_ready "${TCPSHARK_PID}" "${OUTPUT_DIR}/stderr.log" \
+	|| fatal "tcpshark capture did not become ready"
 
 # 4. Server: listen and send 2 MB of data.
 ip netns exec "${NETNS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \

@@ -69,6 +69,14 @@ before its measurements. To add a parallel case, review its input filters,
 namespace/device ownership, global settings and cleanup, then declare its actual
 resources in the table. A unique port alone does not isolate host-wide BPF data.
 
+Wait for feature readiness before driving a workload: HTTP metrics readiness does
+not imply that asynchronous BPF attachments have completed. Start negative-event
+observation windows only after the required hooks are attached as well.
+The standalone iotracing and tcpshark commands report `capture ready` on stderr;
+wait for that notice before generating bounded workloads.
+TCP tests share `tcpshark_capture_is_ready` and reserve startup time in their
+CLI watchdog deadlines; they still stop captures explicitly after verification.
+
 `integration/lib_resources.sh` stores allocation state and `flock` leases in the
 runner's `resources/` directory. Cases request ports through
 `allocate_available_port`; the shared ledger covers daemon listeners, traffic

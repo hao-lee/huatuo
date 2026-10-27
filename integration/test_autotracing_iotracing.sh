@@ -88,5 +88,6 @@ write_diskstats 600
 sleep 6
 write_diskstats 1100
 
-wait_until 10 1 iotracing_event_is_valid \
+# The capture duration excludes loading and attaching the real BPF object.
+wait_until 60 0.2 iotracing_event_is_valid \
 	|| fatal "iotracing did not persist the expected autotracing event"

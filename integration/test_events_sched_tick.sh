@@ -37,6 +37,12 @@ tracepoint_available timer tick_stop \
 
 integration_huatuo_bamai_start write_sched_tick_config
 
+# HTTP readiness does not guarantee that the asynchronous probes are attached.
+wait_until 30 0.1 \
+	grep -qE 'attached BPF program.*symbol="?account_process_tick"?([[:space:]]|$)' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
+	|| fatal "sched_tick BPF probes did not attach"
+
 huatuo_bamai_collect_metrics
 check_metrics "sched_tick lifecycle" \
 	'tracing_status_hitcount\{[^}]*tracing="sched_tick"[^}]*\} 0$' \

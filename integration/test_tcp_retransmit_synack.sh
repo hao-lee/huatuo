@@ -19,6 +19,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-synack
 TCPSHARK_BIN=${TOOL_BIN}
@@ -48,7 +49,7 @@ log_info "SYNACK retrans: drop client's final ACK in an isolated namespace"
 namespace_setup_with_pair synack "${S_ADDR}" "${C_ADDR}"
 
 # 1. Hold a listening socket while the kernel handles the 3-way handshake.
-ip netns exec "${NETNS_SERVER}" timeout 8 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+ip netns exec "${NETNS_SERVER}" timeout 38 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
 	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
@@ -63,14 +64,17 @@ log_info "iptables: DROP pure ACK (dport=${TEST_PORT})"
 # 3. Start tcpshark in retransmit mode.
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" \
-	--duration 8 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
+	--duration 38 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${SYNACK_REJECT_PORT}" \
-	--duration 8 --output json > "${OUTPUT_DIR}/rejected-events.json" \
+	--duration 38 --output json > "${OUTPUT_DIR}/rejected-events.json" \
 	2> "${OUTPUT_DIR}/rejected-stderr.log" &
 reject_tcpshark_pid=$!
-sleep 1
+wait_until 30 0.1 tcpshark_capture_is_ready "${TCPSHARK_PID}" "${OUTPUT_DIR}/stderr.log" \
+	|| fatal "tcpshark capture did not become ready"
+wait_until 30 0.1 tcpshark_capture_is_ready "${reject_tcpshark_pid}" "${OUTPUT_DIR}/rejected-stderr.log" \
+	|| fatal "rejecting tcpshark capture did not become ready"
 
 # 4. Client connects: SYN → server, SYNACK → client, ACK → dropped.
 timeout 3 ip netns exec "${NETNS_CLIENT}" bash -c \

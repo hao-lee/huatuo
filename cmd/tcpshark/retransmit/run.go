@@ -73,6 +73,7 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 	}()
 
 	if cfg.Dropwatch == nil {
+		log.Info("tcpshark: capture ready")
 		return writeRetransmitEvents(groupCtx, retransmitTracer.ReadInto, sink, cfg.SourceType)
 	}
 
@@ -88,6 +89,7 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 	if cfg.Dropwatch.HardwareMode == dropwatch.HardwareAuto && !dropTracer.HardwareEnabled() {
 		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
 	}
+	log.Info("tcpshark: capture ready")
 
 	retransmitEvents := make(chan *retransmitEvent)
 	dropwatchEvents := make(chan *dropEvent)

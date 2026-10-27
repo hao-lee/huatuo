@@ -19,6 +19,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-tlp
 TCPSHARK_BIN=${TOOL_BIN}
@@ -50,7 +51,7 @@ namespace_setup_with_pair tlp "${S_ADDR}" "${C_ADDR}"
 
 # 1. Server: listen immediately, then delay the payload until after the
 #    iptables rule is installed. This leaves unacknowledged data for TLP.
-ip netns exec "${NETNS_SERVER}" timeout 14 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+ip netns exec "${NETNS_SERVER}" timeout 44 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
 	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" \
 	--payload-bytes "${PAYLOAD_SIZE}" --send-delay 3 > /dev/null 2>&1 &
 SRV_PID=$!
@@ -59,26 +60,17 @@ sleep 0.5
 # 2. Start tcpshark with TLP collection explicitly enabled.
 "${TCPSHARK_BIN}" --mode retransmit --enable-tlp --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" \
-	--duration 14 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
+	--duration 44 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 "${TCPSHARK_BIN}" --mode retransmit --enable-tlp --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TLP_REJECT_PORT}" \
-	--duration 14 --output json > "${OUTPUT_DIR}/rejected-events.json" \
+	--duration 44 --output json > "${OUTPUT_DIR}/rejected-events.json" \
 	2> "${OUTPUT_DIR}/rejected-stderr.log" &
 reject_tcpshark_pid=$!
-sleep 0.5
-if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
-	tcpshark_status=0
-	wait "${TCPSHARK_PID}" || tcpshark_status=$?
-	TCPSHARK_PID=""
-	fatal "tcpshark exited before workload start (status=${tcpshark_status})"
-fi
-if ! kill -0 "${reject_tcpshark_pid}" 2> /dev/null; then
-	reject_tcpshark_status=0
-	wait "${reject_tcpshark_pid}" || reject_tcpshark_status=$?
-	reject_tcpshark_pid=""
-	fatal "rejecting tcpshark exited before workload start (status=${reject_tcpshark_status})"
-fi
+wait_until 30 0.1 tcpshark_capture_is_ready "${TCPSHARK_PID}" "${OUTPUT_DIR}/stderr.log" \
+	|| fatal "tcpshark capture did not become ready"
+wait_until 30 0.1 tcpshark_capture_is_ready "${reject_tcpshark_pid}" "${OUTPUT_DIR}/rejected-stderr.log" \
+	|| fatal "rejecting tcpshark capture did not become ready"
 
 # 3. Client connects via bash /dev/tcp and reads data to /dev/null.
 ip netns exec "${NETNS_CLIENT}" timeout 12 bash -c \

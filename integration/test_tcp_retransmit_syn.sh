@@ -19,6 +19,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-syn
 TCPSHARK_BIN=${TOOL_BIN}
@@ -49,14 +50,17 @@ ip netns exec "${NETNS_SERVER}" iptables -I INPUT 1 -p tcp --dport "${TEST_PORT}
 
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and dst host ${NETNS_SERVER_ADDR} and dst port ${TEST_PORT}" \
-	--duration 6 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
+	--duration 36 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and dst host ${NETNS_SERVER_ADDR} and dst port ${SYN_REJECT_PORT}" \
-	--duration 6 --output json > "${OUTPUT_DIR}/rejected-events.json" \
+	--duration 36 --output json > "${OUTPUT_DIR}/rejected-events.json" \
 	2> "${OUTPUT_DIR}/rejected-stderr.log" &
 reject_tcpshark_pid=$!
-sleep 1
+wait_until 30 0.1 tcpshark_capture_is_ready "${TCPSHARK_PID}" "${OUTPUT_DIR}/stderr.log" \
+	|| fatal "tcpshark capture did not become ready"
+wait_until 30 0.1 tcpshark_capture_is_ready "${reject_tcpshark_pid}" "${OUTPUT_DIR}/rejected-stderr.log" \
+	|| fatal "rejecting tcpshark capture did not become ready"
 
 timeout 7 ip netns exec "${NETNS_CLIENT}" bash -c \
 	"exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
