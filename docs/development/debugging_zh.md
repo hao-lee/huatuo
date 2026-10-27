@@ -132,6 +132,9 @@ bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z ms
 failure** 可以排查失败测试；选择 **After test always** 会在测试结束后保留
 虚拟机。
 
+调试集成测试时，可以启用 **Development run: skip unit tests**，仅运行
+integration 和 E2E，仍执行编译。默认执行单元测试，PR 和主分支 CI 始终执行。
+
 ### 连接虚拟机
 
 打开 job 中的 `Debug VM: Retain ...` step，并按日志提示操作：

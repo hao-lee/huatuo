@@ -314,11 +314,12 @@ STUB
 )
 
 # Call the real guest entry function; stub only operations requiring a VM.
-for guest_mode in --prepare-only --test-only combined; do
-	guest_work="${HUATUO_BAMAI_TEST_TMPDIR}/guest-${guest_mode}"
-	mkdir -p "${guest_work}/_output"
-	touch "${guest_work}/_output/portable-generated.commit"
-	TEST_GUEST_WORK="${guest_work}" bash -eu -s -- "${guest_mode}" << 'SH'
+for skip_unit_tests in false true; do
+	for guest_mode in --prepare-only --test-only combined; do
+		guest_work="${HUATUO_BAMAI_TEST_TMPDIR}/guest-${guest_mode}-${skip_unit_tests}"
+		mkdir -p "${guest_work}/_output"
+		touch "${guest_work}/_output/portable-generated.commit"
+		SKIP_UNIT_TESTS="${skip_unit_tests}" TEST_GUEST_WORK="${guest_work}" bash -eu -s -- "${guest_mode}" << 'SH'
 source "$ROOT_DIR/.github/workflows/scripts/vm-test/run-in-vm.sh"
 configure_proxy() { echo proxy >> "$TEST_GUEST_WORK/calls"; }
 print_sys_info() { echo info >> "$TEST_GUEST_WORK/calls"; }
@@ -331,10 +332,15 @@ prefetch_storage_images() { :; }
 cd() { builtin cd "$TEST_GUEST_WORK"; }
 run_guest_tests "$@"
 SH
-	guest_expected=proxy
-	if [[ ${guest_mode} != --test-only ]]; then guest_expected+=$'\ngrow\ninfo\ndependencies'; fi
-	if [[ ${guest_mode} != --prepare-only ]]; then guest_expected+=$'\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1'; fi
-	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
+		guest_expected=proxy
+		if [[ ${guest_mode} != --test-only ]]; then guest_expected+=$'\ngrow\ninfo\ndependencies'; fi
+		if [[ ${guest_mode} != --prepare-only ]]; then
+			guest_targets=test
+			if [[ ${skip_unit_tests} == true ]]; then guest_targets='integration e2e'; fi
+			guest_expected+=$'\nmake install-tools\nmake '"${guest_targets}"' SKIP_PORTABLE_GENERATION=1'
+		fi
+		assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
+	done
 done
 log_info "VM cache transport and guest phase checks passed"
 

@@ -244,6 +244,15 @@ stop_storage_image_prefetch() {
 }
 
 run_guest_tests() {
+	local -a test_targets=(test)
+	case ${SKIP_UNIT_TESTS:-false} in
+	true) test_targets=(integration e2e) ;;
+	false) ;;
+	*)
+		vm_log_error 'SKIP_UNIT_TESTS must be true or false'
+		return 2
+		;;
+	esac
 	configure_proxy
 	export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
 	export GOCACHE=/root/.cache/go-build
@@ -276,10 +285,11 @@ run_guest_tests() {
 	trap stop_storage_image_prefetch EXIT
 	prefetch_storage_images
 	make install-tools
+	if [[ ${SKIP_UNIT_TESTS:-false} == true ]]; then vm_log 'Skipping unit tests for this development run'; fi
 	if [[ -f _output/portable-generated.commit ]]; then
-		make test SKIP_PORTABLE_GENERATION=1
+		make "${test_targets[@]}" SKIP_PORTABLE_GENERATION=1
 	else
-		make test
+		make "${test_targets[@]}"
 	fi
 
 	vm_log '✅✅✅ Tests passed.'

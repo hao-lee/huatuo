@@ -115,6 +115,10 @@ If **Run workflow** is missing, sync your fork's default branch first. GitHub on
 
 Choose **Before test** to inspect or change the VM before testing, **After test on failure** to investigate a failed test, or **After test always** to retain the VM after testing regardless of the outcome.
 
+For integration-test development, enable **Development run: skip unit tests**
+to run only integration and E2E targets. Builds remain enabled. Unit tests run
+by default and always run for PR and main-branch CI.
+
 ### Connect to the VM
 
 Open the job's `Debug VM: Retain ...` step and follow the log instructions:
